@@ -8,13 +8,19 @@
   const S = globalThis.NRFA_SCHEMA;
   if (!S) { document.body.innerHTML = '<p style="padding:24px">schema.js 加载失败，请重新加载扩展。</p>'; return; }
 
-  const STORAGE_KEYS = { settings: 'nrfa_settings', profiles: 'nrfa_profiles', resume: 'nrfa_resume' };
+  const STORAGE_KEYS = {
+    settings: 'nrfa_settings',
+    profiles: 'nrfa_profiles',
+    resume: 'nrfa_resume',
+    photo: 'nrfa_photo'
+  };
   const $ = (id) => document.getElementById(id);
 
   const state = {
     settings: Object.assign({}, S.DEFAULT_SETTINGS),
     profiles: [],
     resume: null,
+    photo: null,
     dirty: false,
     saveTimer: null,
     search: '',
@@ -54,7 +60,8 @@
     await storageSet({
       [STORAGE_KEYS.settings]: state.settings,
       [STORAGE_KEYS.profiles]: state.profiles,
-      [STORAGE_KEYS.resume]: state.resume
+      [STORAGE_KEYS.resume]: state.resume,
+      [STORAGE_KEYS.photo]: state.photo
     });
     state.dirty = false;
     const el = $('saveState');
@@ -77,16 +84,29 @@
     base.id = 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     base.name = name;
     base.updatedAt = Date.now();
+    if (!base.lists) base.lists = {};
     if (!copyFrom) {
       // 新档案清空所有值，避免误以为已经填过
       Object.keys(base.fields).forEach((k) => { base.fields[k] = ''; });
+      base.lists = {};
     }
     return base;
   }
 
+  function listsOf(profile) {
+    const p = profile || activeProfile();
+    if (!p.lists || typeof p.lists !== 'object') p.lists = {};
+    return p.lists;
+  }
+
   function countFilled(profile) {
     const fields = profile.fields || {};
-    return Object.keys(fields).filter((k) => String(fields[k] || '').trim() !== '').length;
+    let n = Object.keys(fields).filter((k) => String(fields[k] || '').trim() !== '').length;
+    const lists = profile.lists || {};
+    Object.keys(lists).forEach((k) => {
+      if (Array.isArray(lists[k])) n += lists[k].length;
+    });
+    return n;
   }
 
   function missingRequired() {
@@ -232,28 +252,168 @@
     } else {
       info.textContent = '尚未选择简历文件';
     }
+    const pinfo = $('photoInfo');
+    if (state.photo && state.photo.name) {
+      const kb = Math.round((state.photo.size || 0) / 1024);
+      pinfo.innerHTML = `<b>${escapeHtml(state.photo.name)}</b> <span>${kb} KB · ${escapeHtml(state.photo.type || '未知类型')}</span>`;
+    } else {
+      pinfo.textContent = '尚未选择证件照（网申「证件照」控件会自动挂载）';
+    }
   }
 
-  function pickResume(file) {
+  function pickFile(file, kind) {
     if (!file) return;
-    if (file.size > 6 * 1024 * 1024) {
-      toast('文件超过 6MB，建议先用压缩版简历', 'err');
+    const isPhoto = kind === 'photo';
+    const limit = isPhoto ? 2 * 1024 * 1024 : 6 * 1024 * 1024;
+    if (file.size > limit) {
+      toast('文件超过 ' + Math.round(limit / 1024 / 1024) + 'MB，请先压缩', 'err');
       return;
     }
     const reader = new FileReader();
     reader.onload = () => {
-      state.resume = {
+      const payload = {
         name: file.name,
         type: file.type || 'application/octet-stream',
         size: file.size,
         dataUrl: String(reader.result)
       };
+      if (isPhoto) state.photo = payload; else state.resume = payload;
       renderAttachment();
       save(true);
-      toast('简历已保存，之后填表会自动挂载', 'ok');
+      toast((isPhoto ? '证件照' : '简历') + '已保存，之后填表会自动挂载', 'ok');
     };
     reader.onerror = () => toast('读取文件失败', 'err');
     reader.readAsDataURL(file);
+  }
+
+  function pickResume(file) { pickFile(file, 'resume'); }
+
+  /* ======================== 可重复区块编辑器 ======================== */
+
+  function renderLists() {
+    const root = $('listsRoot');
+    if (!S.LIST_DEFS || !S.LIST_DEFS.length) {
+      root.innerHTML = '<div class="empty-tip">schema.js 里没有区块字典。</div>';
+      return;
+    }
+    const lists = listsOf();
+    let html = '';
+
+    S.LIST_DEFS.forEach((def) => {
+      const items = Array.isArray(lists[def.key]) ? lists[def.key] : [];
+      html += `<div class="list-block" data-list="${def.key}">
+        <div class="list-head">
+          <h3>${escapeHtml(def.label)}<span class="list-count">${items.length} 条</span></h3>
+          <div class="list-tools">
+            <button class="mini" data-act="add" data-list="${def.key}">＋ 添加一条</button>
+          </div>
+        </div>
+        <div class="list-hint">${escapeHtml(def.hint || '')}</div>`;
+
+      if (!items.length) {
+        html += `<div class="empty-tip small">还没有记录。点「＋ 添加一条」；不需要这项就留空。</div>`;
+      }
+
+      items.forEach((item, i) => {
+        html += `<div class="list-item" data-list="${def.key}" data-i="${i}">
+          <div class="list-item-head">
+            <span class="list-item-no">第 ${i + 1} 条</span>
+            <span class="list-item-title">${escapeHtml(listItemTitle(def, item, i))}</span>
+            <span class="list-item-tools">
+              <button class="mini" data-act="up" data-list="${def.key}" data-i="${i}" ${i === 0 ? 'disabled' : ''}>↑</button>
+              <button class="mini" data-act="down" data-list="${def.key}" data-i="${i}" ${i === items.length - 1 ? 'disabled' : ''}>↓</button>
+              <button class="mini danger" data-act="del" data-list="${def.key}" data-i="${i}">删除</button>
+            </span>
+          </div>
+          <div class="grid">`;
+        def.fields.forEach((f) => {
+          const key = 'L_' + def.key + '_' + i + '_' + f.key;
+          const val = item[f.key] === undefined || item[f.key] === null ? '' : String(item[f.key]);
+          const isLong = f.type === 'textarea';
+          let control;
+          if (isLong) {
+            control = `<textarea id="${key}" data-lkey="${def.key}" data-i="${i}" data-fkey="${f.key}" rows="4">${escapeHtml(val)}</textarea>`;
+          } else if (f.options && f.options.length) {
+            const dl = 'DL_' + key;
+            control = `<input type="text" id="${key}" list="${dl}" data-lkey="${def.key}" data-i="${i}" data-fkey="${f.key}" value="${escapeAttr(val)}">
+              <datalist id="${dl}">${f.options.map((o) => `<option value="${escapeAttr(o)}"></option>`).join('')}</datalist>`;
+          } else {
+            control = `<input type="text" id="${key}" data-lkey="${def.key}" data-i="${i}" data-fkey="${f.key}" value="${escapeAttr(val)}" placeholder="${escapeAttr(f.placeholder || '')}">`;
+          }
+          html += `<div class="field ${isLong ? 'span2' : ''}">
+            <label for="${key}">${escapeHtml(f.label)}</label>${control}
+          </div>`;
+        });
+        html += `</div></div>`;
+      });
+
+      html += `</div>`;
+    });
+
+    root.innerHTML = html;
+
+    /* 输入即写回档案 */
+    root.querySelectorAll('[data-lkey]').forEach((input) => {
+      const handler = () => {
+        const lists2 = listsOf();
+        const arr = lists2[input.dataset.lkey];
+        const item = arr && arr[Number(input.dataset.i)];
+        if (!item) return;
+        item[input.dataset.fkey] = input.value;
+        activeProfile().updatedAt = Date.now();
+        markDirty();
+      };
+      input.addEventListener('input', handler);
+      input.addEventListener('change', handler);
+    });
+
+    /* 增删与排序 */
+    root.querySelectorAll('button[data-act]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const def = S.LIST_MAP[btn.dataset.list];
+        if (!def) return;
+        const lists2 = listsOf();
+        if (!Array.isArray(lists2[def.key])) lists2[def.key] = [];
+        const arr = lists2[def.key];
+        const i = Number(btn.dataset.i);
+        const act = btn.dataset.act;
+
+        if (act === 'add') {
+          if (arr.length >= 20) { toast('单个区块最多 20 条', 'err'); return; }
+          const blank = {};
+          def.fields.forEach((f) => { blank[f.key] = ''; });
+          arr.push(blank);
+        } else if (act === 'del') {
+          if (!confirm(`确定删除「${def.label}」第 ${i + 1} 条吗？`)) return;
+          arr.splice(i, 1);
+        } else if (act === 'up' && i > 0) {
+          const t = arr[i - 1]; arr[i - 1] = arr[i]; arr[i] = t;
+        } else if (act === 'down' && i < arr.length - 1) {
+          const t = arr[i + 1]; arr[i + 1] = arr[i]; arr[i] = t;
+        }
+        activeProfile().updatedAt = Date.now();
+        renderLists();
+        renderProfileList();
+        markDirty();
+      });
+    });
+  }
+
+  function listItemTitle(def, item, i) {
+    // 用最能说明身份的两个字段做标题，方便辨认第几条是什么
+    const prefer = ['company', 'school', 'name', 'type', 'position'];
+    const parts = [];
+    prefer.forEach((k) => {
+      const f = def.fields.find((x) => x.key === k);
+      if (f && String(item[k] || '').trim()) parts.push(String(item[k]).trim());
+    });
+    if (!parts.length) {
+      def.fields.some((f) => {
+        if (String(item[f.key] || '').trim()) { parts.push(String(item[f.key]).trim()); return true; }
+        return false;
+      });
+    }
+    return parts.length ? parts.join(' · ') : '（空）';
   }
 
   /* ============================== 自定义字段 ============================== */
@@ -444,7 +604,7 @@
   }
 
   async function resetAll() {
-    if (!confirm('确定恢复为初始档案吗？当前所有档案与设置都会被替换（简历附件保留）。')) return;
+    if (!confirm('确定恢复为初始档案吗？当前所有档案与设置都会被替换（简历附件与证件照保留）。')) return;
     state.profiles = [JSON.parse(JSON.stringify(S.DEFAULT_PROFILE))];
     state.settings = Object.assign({}, S.DEFAULT_SETTINGS, {
       activeProfileId: state.profiles[0].id,
@@ -460,6 +620,7 @@
   function renderAll() {
     renderProfileList();
     renderFields();
+    renderLists();
     renderAttachment();
     renderCustom();
     renderRules();
@@ -522,6 +683,15 @@
       toast('已清除简历附件');
     });
 
+    $('btnPickPhoto').addEventListener('click', () => $('photoInput').click());
+    $('photoInput').addEventListener('change', (e) => pickFile(e.target.files && e.target.files[0], 'photo'));
+    $('btnClearPhoto').addEventListener('click', () => {
+      state.photo = null;
+      renderAttachment();
+      save(true);
+      toast('已清除证件照');
+    });
+
     $('btnAddCustom').addEventListener('click', addCustomField);
 
     $('btnClearRules').addEventListener('click', () => {
@@ -570,10 +740,11 @@
   /* ============================== 启动 ============================== */
 
   (async function init() {
-    const data = await storageGet([STORAGE_KEYS.settings, STORAGE_KEYS.profiles, STORAGE_KEYS.resume]);
+    const data = await storageGet([STORAGE_KEYS.settings, STORAGE_KEYS.profiles, STORAGE_KEYS.resume, STORAGE_KEYS.photo]);
     state.settings = Object.assign({}, S.DEFAULT_SETTINGS, data[STORAGE_KEYS.settings] || {});
     state.profiles = data[STORAGE_KEYS.profiles];
     state.resume = data[STORAGE_KEYS.resume] || null;
+    state.photo = data[STORAGE_KEYS.photo] || null;
     if (!Array.isArray(state.profiles) || !state.profiles.length) {
       state.profiles = [JSON.parse(JSON.stringify(S.DEFAULT_PROFILE))];
     }

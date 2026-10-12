@@ -112,6 +112,27 @@ const SAMPLE_PROFILE = {
       '以便验证多行文本框的写入逻辑是否真的正常工作。测试所用数据全部为虚构内容，' +
       '其中的人名、手机号、邮箱、学校与公司均为编造，不指向任何一个真实存在的人，' +
       '也不包含任何真实个人信息，请勿据此推断实际使用者的情况，谢谢配合。'
+  },
+  // 可重复区块：页面上第 N 条记录应当取这里的第 N 条
+  lists: {
+    education: [
+      { school: '示例大学', startDate: '2021-09', endDate: '2025-06', major: '软件工程',
+        degree: '本科', degreeType: '学士', college: '计算机学院' }
+    ],
+    internship: [
+      { company: '示例科技有限公司', position: '后端开发实习生', startDate: '2024-07',
+        endDate: '2024-09', content: '示例实习内容甲' },
+      { company: '某某信息技术有限公司', position: '数据开发实习生', startDate: '2024-01',
+        endDate: '2024-03', content: '示例实习内容乙' }
+    ],
+    certificate: [
+      { type: '外语证书', name: '大学英语六级（CET-6）' },
+      { type: '其他证书', name: '钢琴七级证书' }
+    ],
+    skill: [
+      { name: 'Python', level: '熟练' },
+      { name: 'Java', level: '掌握' }
+    ]
   }
 };
 
@@ -121,7 +142,8 @@ const RESUME = { name: '测试简历.pdf', type: 'application/pdf', size: 12345,
 const store = {
   nrfa_settings: SETTINGS,
   nrfa_profiles: [SAMPLE_PROFILE],
-  nrfa_resume: RESUME
+  nrfa_resume: RESUME,
+  nrfa_photo: { name: '测试证件照.jpg', type: 'image/jpeg', size: 2048, dataUrl: 'data:image/jpeg;base64,BBBB' }
 };
 
 const chromeStub = {
@@ -251,6 +273,115 @@ await window.__NRFA__.reload();
 const fillResult2 = await window.__NRFA__.fill();
 check('关闭「只填空白」后第二次填充 ok', fillResult2.ok, true);
 check('关闭「只填空白」后覆盖已有值', document.getElementById('name').value, '张三');
+
+/* ================= 可重复区块：第 N 条页面记录 ← 第 N 条数据 =================
+   模拟北森 / 大易那类网申：同一组字段名重复出现多条，每条后面带个「删除」。
+   页面上放了 2 条实习、2 条证书、2 条技能，以及第 3 条实习（档案里没有 → 应当提示越界）。 */
+const REPEAT_FORM = `
+  <form id="campus">
+    <h2>基本信息</h2>
+    <div><label for="r_name">姓名</label><input id="r_name" type="text"></div>
+
+    <h2>教育经历</h2>
+    <div class="block">
+      <div><label>学校名称</label><input id="edu1_school" type="text"></div>
+      <div><label>开始时间</label><input id="edu1_start" type="text" placeholder="YYYY-MM"></div>
+      <div><label>专业名称</label><input id="edu1_major" type="text"></div>
+      <div><label>学历</label><select id="edu1_degree">
+        <option value="">请选择</option><option>大专</option><option>本科</option><option>硕士研究生</option>
+      </select></div>
+    </div>
+
+    <h2>实习经历</h2>
+    <div class="block">
+      <div><label>单位名称</label><input id="int1_company" type="text"></div>
+      <div><label>开始时间</label><input id="int1_start" type="text" placeholder="YYYY-MM"></div>
+      <div><label>结束时间</label><input id="int1_end" type="text" placeholder="YYYY-MM"></div>
+      <div><label>实习内容</label><textarea id="int1_content"></textarea></div>
+    </div>
+    <div class="block">
+      <div><label>单位名称</label><input id="int2_company" type="text"></div>
+      <div><label>开始时间</label><input id="int2_start" type="text" placeholder="YYYY-MM"></div>
+      <div><label>结束时间</label><input id="int2_end" type="text" placeholder="YYYY-MM"></div>
+      <div><label>实习内容</label><textarea id="int2_content"></textarea></div>
+    </div>
+    <div class="block">
+      <div><label>单位名称</label><input id="int3_company" type="text"></div>
+      <div><label>开始时间</label><input id="int3_start" type="text" placeholder="YYYY-MM"></div>
+    </div>
+
+    <h2>证书</h2>
+    <div class="block">
+      <div><label>证书种类</label><input id="cert1_type" type="text"></div>
+      <div><label>证书名称</label><input id="cert1_name" type="text"></div>
+    </div>
+    <div class="block">
+      <div><label>证书种类</label><input id="cert2_type" type="text"></div>
+      <div><label>证书名称</label><input id="cert2_name" type="text"></div>
+    </div>
+
+    <h2>技能</h2>
+    <div class="block">
+      <div><label>技能名称</label><input id="sk1_name" type="text"></div>
+      <div><label>掌握程度</label><select id="sk1_level">
+        <option value="">请选择</option><option>精通</option><option>熟练</option><option>掌握</option><option>了解</option>
+      </select></div>
+    </div>
+    <div class="block">
+      <div><label>技能名称</label><input id="sk2_name" type="text"></div>
+      <div><label>掌握程度</label><select id="sk2_level">
+        <option value="">请选择</option><option>精通</option><option>熟练</option><option>掌握</option><option>了解</option>
+      </select></div>
+    </div>
+
+    <h2>附件</h2>
+    <div><label for="r_cv">简历附件</label><input id="r_cv" type="file"></div>
+    <div><label for="r_photo">证件照</label><input id="r_photo" type="file"></div>
+  </form>
+`;
+
+document.body.innerHTML = REPEAT_FORM;
+store.nrfa_settings.fillEmptyOnly = true;
+await window.__NRFA__.reload();
+const repeatResult = await window.__NRFA__.fill();
+
+check('区块：整体填充成功', repeatResult.ok, true);
+check('区块：无失败项', repeatResult.stat.failed, 0);
+
+/* 教育经历（1 条） */
+check('区块·教育：学校名称', document.getElementById('edu1_school').value, '示例大学');
+check('区块·教育：开始时间', document.getElementById('edu1_start').value, '2021-09');
+check('区块·教育：专业名称', document.getElementById('edu1_major').value, '软件工程');
+check('区块·教育：学历下拉', document.getElementById('edu1_degree').options[document.getElementById('edu1_degree').selectedIndex].textContent.trim(), '本科');
+
+/* 实习经历（页面上 2 条都有数据，第 3 条越界） */
+check('区块·实习1：单位名称', document.getElementById('int1_company').value, '示例科技有限公司');
+check('区块·实习1：开始时间', document.getElementById('int1_start').value, '2024-07');
+check('区块·实习1：实习内容', document.getElementById('int1_content').value, '示例实习内容甲');
+check('区块·实习2：单位名称（取第 2 条）', document.getElementById('int2_company').value, '某某信息技术有限公司');
+check('区块·实习2：开始时间', document.getElementById('int2_start').value, '2024-01');
+check('区块·实习2：实习内容', document.getElementById('int2_content').value, '示例实习内容乙');
+check('区块·实习3：越界不填', document.getElementById('int3_company').value, '');
+check('区块·实习3：越界不填', document.getElementById('int3_start').value, '');
+
+/* 证书（2 条，且「证书名称」要能和列表里的「语言证书」字段区分开） */
+check('区块·证书1：种类', document.getElementById('cert1_type').value, '外语证书');
+check('区块·证书1：名称', document.getElementById('cert1_name').value, '大学英语六级（CET-6）');
+check('区块·证书2：种类', document.getElementById('cert2_type').value, '其他证书');
+check('区块·证书2：名称', document.getElementById('cert2_name').value, '钢琴七级证书');
+
+/* 技能（2 条，掌握程度走下拉匹配） */
+check('区块·技能1：名称', document.getElementById('sk1_name').value, 'Python');
+check('区块·技能1：掌握程度', document.getElementById('sk1_level').options[document.getElementById('sk1_level').selectedIndex].textContent.trim(), '熟练');
+check('区块·技能2：名称', document.getElementById('sk2_name').value, 'Java');
+check('区块·技能2：掌握程度', document.getElementById('sk2_level').options[document.getElementById('sk2_level').selectedIndex].textContent.trim(), '掌握');
+
+/* 两个文件槽要各挂各的，不能串 */
+check('区块·附件：简历挂对了', document.getElementById('r_cv').files[0].name, '测试简历.pdf');
+check('区块·附件：证件照挂对了', document.getElementById('r_photo').files[0].name, '测试证件照.jpg');
+
+/* 平面字段不受影响 */
+check('区块：扁平字段仍生效', document.getElementById('r_name').value, '张三');
 
 /* ------------------------------- 输出 ------------------------------- */
 const failed = results.filter((r) => !r.ok);

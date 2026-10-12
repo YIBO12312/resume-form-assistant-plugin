@@ -96,7 +96,7 @@ const keysInContent = [...contentJs.matchAll(/'(nrfa_[a-z]+)'/g)].map((m) => m[1
 const keysInOptions = [...readFileSync(join(ROOT, 'src/options/options.js'), 'utf8').matchAll(/'(nrfa_[a-z]+)'/g)].map((m) => m[1]);
 const keysInPopup = [...popupJs.matchAll(/'(nrfa_[a-z]+)'/g)].map((m) => m[1]);
 const allKeys = new Set([...keysInContent, ...keysInOptions, ...keysInPopup]);
-const expectedKeys = ['nrfa_settings', 'nrfa_profiles', 'nrfa_resume'];
+const expectedKeys = ['nrfa_settings', 'nrfa_profiles', 'nrfa_resume', 'nrfa_photo'];
 for (const k of allKeys) {
   if (!expectedKeys.includes(k)) fail(`出现了意料之外的存储键：${k}`);
 }

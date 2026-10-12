@@ -157,6 +157,55 @@ body {
 .field .counter { font-size: 11px; color: #9ca3af; text-align: right; margin-top: 2px; }
 .field .fhint { font-size: 11px; color: #9ca3af; margin-top: 3px; }
 
+/* --------------------------- 可重复区块编辑器 --------------------------- */
+.list-block {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  background: #fcfcfd;
+}
+.list-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 2px;
+}
+.list-head h3 {
+  margin: 0; font-size: 14px; font-weight: 700; color: var(--ink);
+  display: flex; align-items: center; gap: 8px;
+}
+.list-count {
+  font-size: 11px; font-weight: 500; color: var(--muted);
+  background: #f3f4f6; border-radius: 8px; padding: 1px 8px;
+}
+.list-tools { display: flex; gap: 6px; }
+.list-hint { font-size: 11.5px; color: var(--muted); line-height: 1.7; margin-bottom: 10px; }
+
+.list-item {
+  background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px 12px; margin-bottom: 10px;
+}
+.list-item-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+  padding-bottom: 8px; border-bottom: 1px dashed var(--line);
+}
+.list-item-no {
+  font-size: 11px; font-weight: 700; color: var(--blue-dark);
+  background: #eff6ff; border-radius: 6px; padding: 2px 8px; flex: none;
+}
+.list-item-title {
+  font-size: 12.5px; color: #374151; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.list-item-tools { display: flex; gap: 4px; flex: none; }
+.list-item .grid { gap: 10px 14px; }
+.list-item .field input, .list-item .field textarea {
+  width: 100%; padding: 7px 9px; border-radius: 8px; border: 1px solid #d1d5db;
+  font-size: 12.5px; font-family: inherit; color: var(--ink); background: #fff;
+}
+.list-item .field textarea { resize: vertical; line-height: 1.6; }
+.list-item .field label { font-size: 12px; }
+.empty-tip.small { font-size: 12px; padding: 8px 0; }
+
 /* ------------------------------- 附件 ------------------------------- */
 .attach-box {
   display: flex; align-items: center; justify-content: space-between; gap: 14px;

@@ -33,7 +33,12 @@
    */
   const IS_TOP = (function () { try { return window.top === window; } catch (e) { return false; } })();
 
-  const STORAGE_KEYS = { settings: 'nrfa_settings', profiles: 'nrfa_profiles', resume: 'nrfa_resume' };
+  const STORAGE_KEYS = {
+    settings: 'nrfa_settings',
+    profiles: 'nrfa_profiles',
+    resume: 'nrfa_resume',
+    photo: 'nrfa_photo'
+  };
 
   /** 匹配来源的中文说明，面板里展示给用户看 */
   const SOURCE_LABELS = {
@@ -138,7 +143,30 @@
 
   /* ============================== 数据 ============================== */
 
+  /** 当前档案里的可重复区块数据 */
+  function listsOf() {
+    const p = state.profile || {};
+    return (p.lists && typeof p.lists === 'object') ? p.lists : {};
+  }
+
+  /**
+   * 参与识别的字段集合：
+   *   - 扁平字段（单条）
+   *   - 可重复区块的子字段（仅当档案里该区块有条目时才加入）
+   *   - 用户自定义字段
+   * 区块一旦有条目，就把被它顶替的扁平字段剔掉，
+   * 免得同一个控件被「单条字段」和「第 N 条区块」同时争抢。
+   */
   function effectiveFields() {
+    const lists = listsOf();
+    const dead = S.supersededKeys ? S.supersededKeys(lists) : {};
+    const flat = S.FIELD_DEFS.filter((d) => !dead[d.key]);
+
+    const listItems = (S.listItemFields ? S.listItemFields() : []).filter((f) => {
+      const items = lists[f.listKey];
+      return Array.isArray(items) && items.length > 0;
+    });
+
     const custom = (state.settings.customFields || []).map((cf) => ({
       key: cf.key,
       label: cf.label || cf.key,
@@ -146,7 +174,8 @@
       type: cf.type || 'text',
       aliases: (cf.aliases && cf.aliases.length) ? cf.aliases : [cf.label || cf.key]
     }));
-    return S.FIELD_DEFS.concat(custom);
+
+    return flat.concat(listItems, custom);
   }
 
   function valueOf(key) {
@@ -155,22 +184,42 @@
     return v === undefined || v === null ? '' : v;
   }
 
+  /** 取某条区块记录里的某个字段值 */
+  function valueOfListItem(listKey, index, itemKey) {
+    const items = listsOf()[listKey];
+    if (!Array.isArray(items)) return '';
+    const item = items[index];
+    if (!item) return '';
+    const v = item[itemKey];
+    return v === undefined || v === null ? '' : v;
+  }
+
+  /** 档案里一共有几条 */
+  function listCount(listKey) {
+    const items = listsOf()[listKey];
+    return Array.isArray(items) ? items.length : 0;
+  }
+
   function fieldLabel(key) {
     const def = S.FIELD_MAP[key];
     if (def) return def.label;
     const cf = (state.settings.customFields || []).find((c) => c.key === key);
-    return cf ? (cf.label || key) : key;
-  }
-
-  function isDateLikeField(key) {
-    const def = S.FIELD_MAP[key];
-    return !!(def && (def.type === 'date' || def.type === 'month'));
+    if (cf) return cf.label || key;
+    // 区块子字段的 key 形如 internship.company
+    const dot = String(key).indexOf('.');
+    if (dot > 0 && S.LIST_MAP) {
+      const list = S.LIST_MAP[key.slice(0, dot)];
+      const item = list && list.fields.find((f) => f.key === key.slice(dot + 1));
+      if (list && item) return list.label + ' · ' + item.label;
+    }
+    return key;
   }
 
   async function loadAll() {
-    const data = await storageGet([STORAGE_KEYS.settings, STORAGE_KEYS.profiles, STORAGE_KEYS.resume]);
+    const data = await storageGet([STORAGE_KEYS.settings, STORAGE_KEYS.profiles, STORAGE_KEYS.resume, STORAGE_KEYS.photo]);
     state.settings = Object.assign({}, S.DEFAULT_SETTINGS, data[STORAGE_KEYS.settings] || {});
     state.resumeFile = data[STORAGE_KEYS.resume] || null;
+    state.photoFile = data[STORAGE_KEYS.photo] || null;
     let profiles = data[STORAGE_KEYS.profiles];
     if (!Array.isArray(profiles) || !profiles.length) {
       profiles = [JSON.parse(JSON.stringify(S.DEFAULT_PROFILE))];
@@ -330,38 +379,178 @@
 
   /* ============================== 生成计划 ============================== */
 
+  /**
+   * 生成一条填充计划。这里只记录「哪个控件命中了哪个字段」，
+   * 具体填什么值留到 resolveEntry 统一算 —— 因为可重复区块要等
+   * 全部控件匹配完、按 DOM 顺序分配完序号之后才知道该取第几条数据。
+   */
   function makeEntry(kind, el, hit, extra) {
-    const key = hit.fieldKey;
-    const raw = valueOf(key);
-    const entry = Object.assign({
+    const field = hit.field || {};
+    return Object.assign({
       kind: kind,
       el: el,
-      fieldKey: key,
-      label: fieldLabel(key),
+      field: field,
+      fieldKey: hit.fieldKey,
+      listKey: field.listKey || null,
+      itemKey: field.itemKey || null,
+      instanceIndex: 0,
+      label: fieldLabel(hit.fieldKey),
       matchedBy: hit.source,
       score: Math.round(hit.score),
-      rawValue: raw,
+      rawValue: '',
       value: '',
       include: true,
       status: 'pending',
       reason: ''
     }, extra || {});
+  }
 
-    if (raw === '' || raw === null || raw === undefined) {
-      entry.status = 'nodata';
-      entry.reason = '档案中该字段为空';
-      entry.include = false;
-      return entry;
+  /**
+   * 给可重复区块的控件分配序号。
+   * 规则很直白：同一个字段在一页上第 N 次出现，就取档案里第 N 条记录。
+   * 遍历用一次 querySelectorAll（含自绘下拉容器），它天然返回文档顺序，
+   * 所以「第几个」就等于「页面上从上到下第几个」。
+   */
+  function assignListIndices(plan) {
+    const byEl = new Map();
+    plan.forEach((e) => { if (e.listKey) byEl.set(e.el, e); });
+    if (!byEl.size) return;
+
+    /* 1. 按文档顺序编号：querySelectorAll 天然返回文档顺序（含自绘下拉容器） */
+    const counters = {};
+    const seen = new Set();
+    let nodes = [];
+    try {
+      nodes = document.querySelectorAll('input,select,textarea,' + CUSTOM_SELECT_SELECTOR);
+    } catch (e) {
+      nodes = document.querySelectorAll('input,select,textarea');
     }
-    return entry;
+    for (let i = 0; i < nodes.length; i++) {
+      const entry = byEl.get(nodes[i]);
+      if (!entry) continue;
+      const k = entry.listKey + '.' + entry.itemKey;
+      entry.instanceIndex = counters[k] || 0;
+      counters[k] = entry.instanceIndex + 1;
+      seen.add(entry);
+    }
+
+    /* 2. 兜底：没被上面遍历到的（例如藏在 Shadow DOM 或模板克隆里的），按插入顺序续号 */
+    const fallback = {};
+    plan.forEach((e) => {
+      if (!e.listKey || seen.has(e)) return;
+      const k = e.listKey + '.' + e.itemKey;
+      const idx = fallback[k] === undefined ? (counters[k] || 0) : fallback[k];
+      e.instanceIndex = idx;
+      fallback[k] = idx + 1;
+      counters[k] = idx + 1;
+    });
+
+    /* 3. 把序号写进标签，并标出哪些超出了档案里的记录条数 */
+    plan.forEach((e) => {
+      if (!e.listKey) return;
+      const total = listCount(e.listKey);
+      const listLabel = (S.LIST_MAP && S.LIST_MAP[e.listKey]) ? S.LIST_MAP[e.listKey].label : '';
+      e.label = fieldLabel(e.fieldKey) +
+        '（' + listLabel + ' 第 ' + (e.instanceIndex + 1) + ' 条' +
+        (total ? '，档案共 ' + total + ' 条' : '') + '）';
+      e.outOfRange = e.instanceIndex >= total;
+    });
+  }
+
+  /** 阶段三：算出每个控件到底要填什么值 */
+  function resolveEntry(entry) {
+    const el = entry.el;
+
+    /* --- 文件类：值来自「简历附件 / 证件照」两个独立存储槽 --- */
+    if (entry.kind === 'file') {
+      const isPhoto = entry.fieldKey === 'photoFile';
+      const f = isPhoto ? state.photoFile : state.resumeFile;
+      if (f && f.name) {
+        entry.status = 'pending';
+        entry.include = true;
+        entry.value = f.name;
+        entry.rawValue = f.name;
+        entry.reason = '';
+      } else {
+        entry.status = 'nodata';
+        entry.include = false;
+        entry.reason = isPhoto ? '尚未在设置页选择证件照' : '尚未在设置页选择简历文件';
+      }
+      return;
+    }
+
+    /* --- 取值：区块字段按序号取，扁平字段直接取 --- */
+    const raw = entry.listKey
+      ? valueOfListItem(entry.listKey, entry.instanceIndex, entry.itemKey)
+      : valueOf(entry.fieldKey);
+    entry.rawValue = (raw === null || raw === undefined) ? '' : raw;
+
+    if (entry.outOfRange) {
+      entry.status = 'nodata';
+      entry.include = false;
+      entry.reason = '档案里没有第 ' + (entry.instanceIndex + 1) + ' 条' +
+        (S.LIST_MAP && S.LIST_MAP[entry.listKey] ? S.LIST_MAP[entry.listKey].label : '') + '记录';
+      return;
+    }
+    if (entry.rawValue === '') {
+      entry.status = 'nodata';
+      entry.include = false;
+      entry.reason = entry.listKey ? '这条记录里该字段为空' : '档案中该字段为空';
+      return;
+    }
+
+    /* --- 按控件类型换算成可直接写入的值 --- */
+    if (entry.kind === 'radio') {
+      const g = entry.group;
+      if (!g) { entry.status = 'failed'; entry.reason = '找不到选项组'; entry.include = false; return; }
+      const texts = g.radios.map((r) => M.optionLabelOf(r));
+      const picked = M.chooseOption(entry.rawValue, texts);
+      if (!picked) {
+        entry.status = 'nomatch';
+        entry.reason = '没有「' + truncate(entry.rawValue, 12) + '」这个选项';
+        entry.include = false;
+      } else {
+        entry.value = picked;
+        entry.targetRadio = g.radios[texts.indexOf(picked)];
+      }
+      return;
+    }
+
+    if (entry.kind === 'select') {
+      const opts = Array.prototype.map.call(el.options, (o) => (o.textContent || '').trim());
+      const picked = M.chooseOption(entry.rawValue, opts);
+      if (!picked) {
+        entry.status = 'nomatch';
+        entry.reason = '下拉里没有匹配的选项';
+        entry.include = false;
+      } else {
+        entry.value = picked;
+        entry.targetIndex = opts.indexOf(picked);
+      }
+      return;
+    }
+
+    if (entry.kind === 'customSelect') {
+      entry.value = String(entry.rawValue);
+      return;
+    }
+
+    /* --- 文本类：按控件要求改写日期格式，并按 maxlength 截断 --- */
+    entry.value = M.formatValue(entry.rawValue, el, entry.field);
+    if (el.getAttribute && el.getAttribute('maxlength')) {
+      const max = parseInt(el.getAttribute('maxlength'), 10);
+      if (!isNaN(max) && max > 0 && entry.value.length > max) {
+        entry.value = entry.value.slice(0, max);
+        entry.reason = '已按 maxlength=' + max + ' 截断';
+      }
+    }
   }
 
   async function buildPlan() {
     const plan = [];
-
-    /* --- 单选组去重 --- */
     const handledRadioGroups = [];
 
+    /* ---------------- 阶段一：匹配控件 ---------------- */
     const natives = scanNativeControls();
     for (const el of natives) {
       const itype = (el.getAttribute('type') || 'text').toLowerCase();
@@ -370,20 +559,7 @@
         if (!state.settings.fillFileInput) continue;
         const hit = M.matchElement(el, { index: state.index, threshold: state.settings.matchThreshold, allowFile: true });
         if (!hit) continue;
-        const entry = makeEntry('file', el, hit);
-        // 附件的数据来自"简历附件"而不是档案字段，需要单独判定
-        if (state.resumeFile && state.resumeFile.name) {
-          entry.status = 'pending';
-          entry.include = true;
-          entry.value = state.resumeFile.name;
-          entry.rawValue = state.resumeFile.name;
-          entry.reason = '';
-        } else {
-          entry.status = 'nodata';
-          entry.include = false;
-          entry.reason = '尚未在设置页选择简历文件';
-        }
-        plan.push(entry);
+        plan.push(makeEntry('file', el, hit));
         continue;
       }
 
@@ -394,20 +570,7 @@
         handledRadioGroups.push(g.radios[0]);
         const hit = M.matchElement(el, { index: state.index, threshold: state.settings.matchThreshold });
         if (!hit) continue;
-        const entry = makeEntry('radio', el, hit, { group: g });
-        if (entry.rawValue) {
-          const texts = g.radios.map((r) => M.optionLabelOf(r));
-          const picked = M.chooseOption(entry.rawValue, texts);
-          if (!picked) {
-            entry.status = 'nomatch';
-            entry.reason = '没有「' + truncate(entry.rawValue, 12) + '」这个选项';
-            entry.include = false;
-          } else {
-            entry.value = picked;
-            entry.targetRadio = g.radios[texts.indexOf(picked)];
-          }
-        }
-        plan.push(entry);
+        plan.push(makeEntry('radio', el, hit, { group: g }));
         continue;
       }
 
@@ -416,58 +579,32 @@
       /* 站点规则优先于自动识别 */
       let hit = null;
       const rule = findRuleFor(el);
-      if (rule && S.FIELD_MAP[rule.fieldKey]) {
-        hit = { fieldKey: rule.fieldKey, field: S.FIELD_MAP[rule.fieldKey], score: 999, source: 'site-rule' };
+      if (rule) {
+        const rf = S.FIELD_MAP[rule.fieldKey] ||
+          (S.listItemFields ? S.listItemFields().find((f) => f.key === rule.fieldKey) : null);
+        if (rf) hit = { fieldKey: rule.fieldKey, field: rf, score: 999, source: 'site-rule' };
       }
       if (!hit) {
         hit = M.matchElement(el, { index: state.index, threshold: state.settings.matchThreshold });
       }
       if (!hit) continue;
 
-      const kind = el.tagName === 'SELECT' ? 'select' : 'text';
-      const entry = makeEntry(kind, el, hit);
-
-      if (entry.rawValue !== '' && entry.rawValue !== null && entry.status !== 'nodata') {
-        if (kind === 'select') {
-          const opts = Array.prototype.map.call(el.options, (o) => (o.textContent || '').trim());
-          const picked = M.chooseOption(entry.rawValue, opts);
-          if (!picked) {
-            entry.status = 'nomatch';
-            entry.reason = '下拉里没有匹配的选项';
-            entry.include = false;
-          } else {
-            entry.value = picked;
-            entry.targetIndex = opts.indexOf(picked);
-          }
-        } else {
-          entry.value = M.formatValue(entry.rawValue, el, hit.field);
-          if (el.getAttribute('maxlength')) {
-            const max = parseInt(el.getAttribute('maxlength'), 10);
-            if (!isNaN(max) && max > 0 && entry.value.length > max) {
-              const cut = entry.value.slice(0, max);
-              entry.value = cut;
-              entry.reason = '已按 maxlength=' + max + ' 截断';
-            }
-          }
-        }
-      }
-      plan.push(entry);
+      plan.push(makeEntry(el.tagName === 'SELECT' ? 'select' : 'text', el, hit));
     }
 
-    /* --- 自定义下拉（Ant Design / Element UI / iView / Semi / Arco ...） --- */
+    /* ---------------- 自定义下拉（Ant Design / Element UI / iView / Semi / Arco） ---------------- */
     const customs = scanCustomSelects();
     for (const w of customs) {
-      // 过滤掉明显不是表单控件的（例如搜索框、分页器）
-      const round = w.className || '';
-      if (/pagination|page-size|search-select-filter/i.test(round)) continue;
+      const cls = w.className || '';
+      if (/pagination|page-size|search-select-filter/i.test(cls)) continue;
       const hit = M.matchElement(w, { index: state.index, threshold: state.settings.matchThreshold });
       if (!hit) continue;
-      const entry = makeEntry('customSelect', w, hit, { display: selectDisplayValue(w) });
-      if (entry.rawValue !== '' && entry.status !== 'nodata') {
-        entry.value = String(entry.rawValue);
-      }
-      plan.push(entry);
+      plan.push(makeEntry('customSelect', w, hit, { display: selectDisplayValue(w) }));
     }
+
+    /* ---------------- 阶段二 / 三：分配区块序号 → 解析取值 ---------------- */
+    assignListIndices(plan);
+    plan.forEach(resolveEntry);
 
     return plan;
   }
@@ -613,8 +750,10 @@
 
   async function fillFile(entry) {
     const input = entry.el;
-    const f = state.resumeFile;
-    if (!f || !f.dataUrl) return { ok: false, reason: '尚未在设置页选择简历文件' };
+    const isPhoto = entry.fieldKey === 'photoFile';
+    const f = isPhoto ? state.photoFile : state.resumeFile;
+    const what = isPhoto ? '证件照' : '简历文件';
+    if (!f || !f.dataUrl) return { ok: false, reason: '尚未在设置页选择' + what };
     try {
       const res = await fetch(f.dataUrl);
       const blob = await res.blob();
@@ -630,7 +769,7 @@
       highlight(input);
       return { ok: true, undo: null };
     } catch (e) {
-      return { ok: false, reason: '挂载简历失败：' + (e && e.message ? e.message : e) };
+      return { ok: false, reason: '挂载' + what + '失败：' + (e && e.message ? e.message : e) };
     }
   }
 

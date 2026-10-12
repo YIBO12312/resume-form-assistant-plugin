@@ -80,7 +80,123 @@
         "certificate": "大学英语六级（CET-6）；全国计算机等级考试二级",
         "languageSkill": "英语（CET-6，可阅读英文技术文档）",
         "hobby": "跑步、开源项目、技术文档写作",
-        "resumeFile": ""
+        "resumeFile": "",
+        "nationality": "",
+        "idCardType": "",
+        "graduateType": "",
+        "mailingAddress": "",
+        "schoolLocation": "",
+        "majorCategory": "",
+        "classSize": "",
+        "classRank": "",
+        "verifyCode": "",
+        "verifyCodeExpiry": "",
+        "languageType": "",
+        "languageLevel": "",
+        "languageScore": "",
+        "certificateType": "",
+        "certificateName": "",
+        "skillName": "",
+        "skillLevel": "",
+        "awardName": "",
+        "awardLevel": "",
+        "awardDate": "",
+        "overseasStudy": "",
+        "photoFile": ""
+      },
+      "lists": {
+        "education": [
+          {
+            "school": "示例大学",
+            "startDate": "2021-09",
+            "endDate": "2025-06",
+            "major": "软件工程",
+            "degree": "本科",
+            "degreeType": "学士",
+            "college": "计算机学院",
+            "majorCategory": "计算机软件",
+            "gpa": "3.6/4.0",
+            "classSize": "40",
+            "classRank": "5/40",
+            "eduRank": "8/120",
+            "overseas": "否"
+          }
+        ],
+        "internship": [
+          {
+            "company": "某某科技有限公司",
+            "position": "后端开发实习生",
+            "startDate": "2024-07",
+            "endDate": "2024-09",
+            "content": "参与订单中心重构，负责接口开发与联调。\n• 接口开发：基于 Spring Boot 完成 12 个 REST 接口，补充单元测试，覆盖率达到 80%。\n• 性能优化：定位并修复 3 处慢 SQL，列表接口平均响应时间从 800ms 降到 150ms。"
+          },
+          {
+            "company": "示例数据服务有限公司",
+            "position": "数据开发实习生",
+            "startDate": "2024-01",
+            "endDate": "2024-03",
+            "content": "负责离线数仓日常任务维护与报表开发。\n• 任务治理：梳理并修复 6 个长期失败调度任务，日报产出时间提前 40 分钟。\n• 报表开发：使用 SQL 完成 4 张业务看板底表，支撑运营周会数据。"
+          }
+        ],
+        "job": [],
+        "project": [
+          {
+            "name": "示例数据看板：实时指标监控平台",
+            "role": "独立开发",
+            "startDate": "2024-03",
+            "endDate": "2024-06",
+            "description": "项目背景：业务方缺少统一的实时指标看板，数据分散在多个系统里。\n• 数据链路：Kafka 接收埋点数据，Flink 实时清洗聚合后写入 MySQL。\n• 前端大屏：Vue3 + ECharts 实现 8 类核心指标展示，支持时间范围切换与阈值告警。"
+          }
+        ],
+        "language": [
+          {
+            "type": "英语",
+            "level": "英语六级",
+            "score": "512",
+            "certificate": "大学英语六级（CET-6）"
+          }
+        ],
+        "certificate": [
+          {
+            "type": "外语证书",
+            "name": "大学英语六级（CET-6）",
+            "date": "2023-06"
+          },
+          {
+            "type": "其他证书",
+            "name": "全国计算机等级考试二级",
+            "date": "2023-09"
+          }
+        ],
+        "skill": [
+          {
+            "name": "Java",
+            "level": "熟练"
+          },
+          {
+            "name": "MySQL",
+            "level": "熟练"
+          },
+          {
+            "name": "Python",
+            "level": "掌握"
+          }
+        ],
+        "award": [
+          {
+            "name": "示例一等奖学金",
+            "level": "院校级",
+            "date": "2022-11"
+          }
+        ],
+        "practice": [
+          {
+            "name": "校园开放日志愿服务",
+            "startDate": "2023-09",
+            "endDate": "2023-09",
+            "description": "担任引导志愿者，负责 2 个点位的路线指引与咨询答疑。"
+          }
+        ]
       }
     }
   ]

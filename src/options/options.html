@@ -37,6 +37,7 @@
 
       <nav class="nav" id="nav">
         <a href="#fields" class="active">档案字段</a>
+        <a href="#lists">经历与技能</a>
         <a href="#attachment">简历附件</a>
         <a href="#custom">自定义字段</a>
         <a href="#rules">站点规则</a>
@@ -60,15 +61,36 @@
         <div id="fieldsRoot"></div>
       </section>
 
+      <section id="sec-lists" class="sec">
+        <div class="sec-head">
+          <h2>经历与技能（可重复区块）</h2>
+        </div>
+        <p class="hint">
+          大厂网申（北森 / 大易 / Moka 那类系统）的「教育经历、语言能力、证书、技能、获奖情况、实习经历」
+          都是可以点「添加」加多条的区块，每条的字段名一模一样。
+          <b>这里填几条，页面上对应的第几条就会被自动填上</b>——所以不用你在页面上一条条手填。
+          顺序请按页面上的显示顺序（一般是时间倒序）。
+        </p>
+        <div id="listsRoot"></div>
+      </section>
+
       <section id="sec-attachment" class="sec">
-        <div class="sec-head"><h2>简历附件</h2></div>
-        <p class="hint">选一个本地简历文件（PDF / DOC / DOCX，建议 5MB 以内）。填表时插件会把它自动挂到「上传简历」这类文件控件上。</p>
+        <div class="sec-head"><h2>简历附件与证件照</h2></div>
+        <p class="hint">文件都存在本机浏览器里，填表时会自动挂到页面的「上传简历 / 证件照」控件上。建议 5MB 以内。</p>
         <div class="attach-box">
           <div class="attach-info" id="attachInfo">尚未选择简历文件</div>
           <div class="attach-actions">
             <input type="file" id="resumeInput" accept=".pdf,.doc,.docx,.txt,.rtf" hidden>
-            <button class="btn" id="btnPickResume">选择文件…</button>
+            <button class="btn" id="btnPickResume">选择简历…</button>
             <button class="btn danger" id="btnClearResume">清除</button>
+          </div>
+        </div>
+        <div class="attach-box" style="margin-top:12px">
+          <div class="attach-info" id="photoInfo">尚未选择证件照</div>
+          <div class="attach-actions">
+            <input type="file" id="photoInput" accept="image/*" hidden>
+            <button class="btn" id="btnPickPhoto">选择证件照…</button>
+            <button class="btn danger" id="btnClearPhoto">清除</button>
           </div>
         </div>
         <p class="hint small">注意：部分网站的文件控件由自绘组件实现，浏览器不允许脚本直接置入文件，这种情况下需要你手动选一次。</p>
