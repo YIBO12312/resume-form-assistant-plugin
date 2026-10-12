@@ -266,7 +266,14 @@
 
   /* ============================== 扫描 ============================== */
 
-  const CLASS_SELECT_SELECTOR = '.ant-select,.el-select,.ivu-select,.semi-select,.next-select,.arco-select';
+  /* 自绘下拉的类名。phoenix-* 是北森自家的设计系统（zhiye.com / 北森校招那套），
+     ux-* / itl-* 是北森老版门户，一并覆盖。 */
+  const CLASS_SELECT_SELECTOR = [
+    '.ant-select', '.el-select', '.ivu-select', '.semi-select', '.next-select', '.arco-select',
+    '.phoenix-select', '.phoenix-select-v2', '.phoenix-cascader', '.phoenix-tree-select',
+    '.phoenix-date-picker', '.phoenix-time-picker', '.phoenix-picker', '.phoenix-selector',
+    '.ux-select', '.ux-cascader', '.beisen-select'
+  ].join(',');
   const CUSTOM_SELECT_SELECTOR = CLASS_SELECT_SELECTOR + ',[role="combobox"]';
   const DROPDOWN_OPTION_SELECTOR = [
     '.ant-select-dropdown .ant-select-item-option',
@@ -277,6 +284,13 @@
     '.semi-select-option',
     '.next-menu-item',
     '.arco-select-option',
+    '.phoenix-select-dropdown [role="option"]',
+    '.phoenix-select-dropdown li',
+    '.phoenix-select-option',
+    '.phoenix-select__option',
+    '.phoenix-cascader-menu-item',
+    '.phoenix-picker-panel li',
+    '.phoenix-dropdown-menu-item',
     '[role="listbox"] [role="option"]',
     '[role="option"]'
   ].join(',');
@@ -773,9 +787,60 @@
     }
   }
 
+  /**
+   * 通用「点开再选」兜底：很多企业级组件库（北森 phoenix、各类自绘 Select）
+   * 用一个 readonly 的 input 显示选中值，直接写 value 是无效的，必须先点开弹出层，
+   * 再点里面的选项。这个函数不依赖具体类名，靠 role=option / li 等通用特征找选项。
+   */
+  async function pickFromPopup(el, want) {
+    clickLike(el);
+    let options = await waitForOptions(1500);
+    if (!options.length) {
+      // 有些组件要点外层容器才展开
+      const wrap = (el.closest && el.closest(CLASS_SELECT_SELECTOR)) || el.parentElement || el;
+      if (wrap !== el) clickLike(wrap);
+      options = await waitForOptions(1200);
+    }
+    if (!options.length) return { ok: false, reason: '点开后没有出现选项列表（可能不是下拉控件）' };
+
+    const texts = options.map((o) => textOf(o));
+    const picked = M.chooseOption(want, texts);
+    if (!picked) {
+      try { document.body.click(); } catch (e) { /* ignore */ }
+      return { ok: false, reason: '弹出的选项里没有「' + truncate(want, 12) + '」' };
+    }
+    clickLike(options[texts.indexOf(picked)]);
+    await sleep(140);
+
+    const after = currentValueOf(el);
+    if (after && M.chooseOption(want, [after])) {
+      highlight(el);
+      return { ok: true, undo: null };
+    }
+    // 值没写进 input，但看起来是被选中的（部分组件把文本画在别的节点上）
+    if (selectDisplayValue(el.parentElement || el) &&
+        M.chooseOption(want, [selectDisplayValue(el.parentElement || el)])) {
+      highlight(el);
+      return { ok: true, undo: null };
+    }
+    return { ok: false, reason: '已点选但控件值未更新' };
+  }
+
   async function applyEntry(entry) {
     try {
-      if (entry.kind === 'text') return fillText(entry);
+      if (entry.kind === 'text') {
+        // 只读输入框几乎一定是自绘下拉，直接走「点开再选」
+        if (entry.el.readOnly) {
+          const picked = await pickFromPopup(entry.el, entry.value);
+          if (picked.ok) return picked;
+          return { ok: false, reason: '只读控件：' + (picked.reason || '无法写入') };
+        }
+        const r = fillText(entry);
+        if (r.ok) return r;
+        // 普通写入失败（页面拒绝）也再试一次点选兜底
+        const fallback = await pickFromPopup(entry.el, entry.value);
+        return fallback.ok ? fallback : r;
+      }
       if (entry.kind === 'select') return fillSelect(entry);
       if (entry.kind === 'radio') return fillRadio(entry);
       if (entry.kind === 'customSelect') return await fillCustomSelect(entry);

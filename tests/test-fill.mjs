@@ -88,6 +88,8 @@ const SAMPLE_PROFILE = {
     gender: '男',
     birth: '2003-05',
     nation: '汉族',
+    politicalStatus: '共青团员',
+    address: '江苏省南京市栖霞区',
     maritalStatus: '未婚',
     phone: '13800138000',
     email: 'zhangsan@example.com',
@@ -382,6 +384,68 @@ check('区块·附件：证件照挂对了', document.getElementById('r_photo').
 
 /* 平面字段不受影响 */
 check('区块：扁平字段仍生效', document.getElementById('r_name').value, '张三');
+
+/* ============ 北森式「只读输入框 + 点开才出现的选项」下拉 ============
+   zhiye.com / 北森校招那套（phoenix 设计系统）里，政治面貌、现居住地、省市这类字段
+   是一个 readonly 的 input：直接写 value 无效，必须先点开弹出层再点选项。
+   这里完整模拟这个交互，验证兜底逻辑真的能选上。 */
+const READONLY_FORM = `
+  <form id="beisen">
+    <div class="phoenix-form-item">
+      <label for="b_name">姓名</label>
+      <input id="b_name" type="text">
+    </div>
+    <div class="phoenix-form-item">
+      <label for="b_politics">政治面貌</label>
+      <input id="b_politics" type="text" readonly placeholder="请选择">
+    </div>
+    <div class="phoenix-form-item">
+      <label for="b_city">现居住地</label>
+      <input id="b_city" type="text" readonly placeholder="请选择">
+    </div>
+    <div class="phoenix-form-item">
+      <label for="b_nation">民族</label>
+      <input id="b_nation" type="text" readonly placeholder="请选择">
+    </div>
+  </form>
+`;
+
+document.body.innerHTML = READONLY_FORM;
+
+// 模拟 phoenix 下拉：点 input 展开一层 [role=option]，点选项后把文本写回 input
+function installPhoenixSelect(inputId, options) {
+  const input = document.getElementById(inputId);
+  let popup = null;
+  input.addEventListener('click', () => {
+    if (popup) return;
+    popup = document.createElement('div');
+    popup.className = 'phoenix-select-dropdown';
+    popup.innerHTML = options.map((t) => `<div role="option" class="phoenix-select-option">${t}</div>`).join('');
+    document.body.appendChild(popup);
+    popup.querySelectorAll('[role=option]').forEach((opt) => {
+      opt.addEventListener('click', () => {
+        input.value = opt.textContent;
+        if (popup && popup.parentNode) popup.parentNode.removeChild(popup);
+        popup = null;
+      });
+    });
+  });
+}
+installPhoenixSelect('b_politics', ['中共党员', '共青团员', '民主党派', '群众']);
+installPhoenixSelect('b_city', ['北京市', '上海市', '江苏省南京市', '江苏省苏州市']);
+installPhoenixSelect('b_nation', ['汉族', '回族', '满族', '其他']);
+
+
+store.nrfa_settings.fillEmptyOnly = true;
+await window.__NRFA__.reload();
+const roResult = await window.__NRFA__.fill();
+
+check('只读下拉：整体填充成功', roResult.ok, true);
+
+check('只读下拉：普通文本框照常填', document.getElementById('b_name').value, '张三');
+check('只读下拉：政治面貌点选成功', document.getElementById('b_politics').value, '共青团员');
+check('只读下拉：现居住地模糊匹配到省份', document.getElementById('b_city').value, '江苏省南京市');
+check('只读下拉：民族点选成功', document.getElementById('b_nation').value, '汉族');
 
 /* ------------------------------- 输出 ------------------------------- */
 const failed = results.filter((r) => !r.ok);

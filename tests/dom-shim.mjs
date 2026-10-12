@@ -82,7 +82,7 @@ class ShimElement {
     let node = this;
     while (node) {
       const ls = node._listeners && node._listeners[ev.type];
-      if (ls) ls.slice().forEach((fn) => { try { fn.call(node, ev); } catch (e) { /* ignore */ } });
+      if (ls) ls.slice().forEach((fn) => { try { fn.call(node, ev); } catch (e) { if (!ev._errLogged) { ev._errLogged = 1; console.error('[dom-shim] 事件监听器抛错:', ev.type, e && e.message); } } });
       if (!ev.bubbles) break;
       node = node.parentNode;
     }
@@ -132,6 +132,8 @@ class ShimElement {
   get id() { return this.getAttribute('id') || ''; }
   get name() { return this.getAttribute('name') || ''; }
   get className() { return this.getAttribute('class') || ''; }
+  set className(v) { this.setAttribute('class', v === null || v === undefined ? '' : String(v)); }
+  set id(v) { this.setAttribute('id', v === null || v === undefined ? '' : String(v)); }
   get classList() {
     const list = this.className.split(/\s+/).filter(Boolean);
     return {
@@ -142,6 +144,8 @@ class ShimElement {
   }
   get type() { return (this.getAttribute('type') || '').toLowerCase(); }
   get hidden() { return this.hasAttribute('hidden'); }
+  get readOnly() { return this.hasAttribute('readonly'); }
+  set readOnly(v) { if (v) this.setAttribute('readonly', ''); else this.removeAttribute('readonly'); }
   get disabled() {
     if (this._disabled !== undefined) return this._disabled;
     return this.hasAttribute('disabled');

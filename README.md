@@ -4,7 +4,7 @@
 
 # 网申助手 · Resume Form Assistant
 
-> 一键填完网申表单的 Edge / Chrome 扩展。打开申请页按 `Alt+Shift+F`，
+> 一键填完网申表单的 Edge / Chrome 扩展。打开申请页按 `Alt+Shift+J`，
 > 姓名、手机、邮箱、学校、专业、学历、毕业时间、实习与项目经历全部自动填好，简历附件也能自动挂上。
 
 **纯本地运行 · 不联网 · 不上传 · 零依赖 · 零构建**
@@ -68,10 +68,10 @@ git clone https://github.com/YIBO12312/resume-form-assistant-plugin.git
 
 | 快捷键 | 作用 |
 | --- | --- |
-| `Alt` + `Shift` + `F` | 一键填充 |
-| `Alt` + `Shift` + `P` | 只看识别结果，不填 |
+| `Alt` + `Shift` + `J` | 一键填充 |
+| `Alt` + `Shift` + `K` | 只看识别结果，不填 |
 
-> 首次用某个网站，建议先 `Alt+Shift+P` 预览，确认没认错再填。
+> 首次用某个网站，建议先 `Alt+Shift+K` 预览，确认没认错再填。
 > 填完请自行核对再提交 —— 插件只负责把值写进控件，不保证网站的校验规则都通过。
 
 ---
@@ -141,7 +141,7 @@ Windows 用户可直接双击 `跑测试.bat`。
 | 套件 | 内容 | 结果 |
 | --- | --- | --- |
 | `tests/run-tests.mjs` | 识别引擎 90 条用例（自带迷你 DOM，确定性运行，不依赖浏览器） | 90 / 90 ✅ |
-| `tests/test-fill.mjs` | 端到端填充：真实执行 `content.js`，校验写值、事件、select / radio / 日期 / 附件 / 撤销、可重复区块序号 | 53 / 53 ✅ |
+| `tests/test-fill.mjs` | 端到端填充：真实执行 `content.js`，校验写值、事件、select / radio / 日期 / 附件 / 撤销、可重复区块序号 | 58 / 58 ✅ |
 | `tests/test-worker.mjs` | service worker：菜单注册、消息分发、多 iframe 结果汇总、按需注入 | 22 / 22 ✅ |
 | `tools/verify.mjs` | 交付前静态自检：manifest、文件引用、存储键、权限、元素 id 对齐、个人数据与保留名扫描 | 全部通过 ✅ |
 
