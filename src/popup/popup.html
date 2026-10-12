@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>网申助手</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="hd">
+    <div class="logo">填</div>
+    <div class="hd-text">
+      <h1>网申助手</h1>
+      <p id="profileName">正在读取档案…</p>
+    </div>
+  </header>
+
+  <section class="card" id="statusCard">
+    <div class="status-line">
+      <span class="dot" id="dot"></span>
+      <span id="statusText">正在扫描当前页面…</span>
+    </div>
+    <div class="metrics" id="metrics" hidden>
+      <div class="metric"><b id="mControls">0</b><span>表单控件</span></div>
+      <div class="metric"><b id="mMatched">0</b><span>已识别</span></div>
+      <div class="metric"><b id="mUsable">0</b><span>可填充</span></div>
+      <div class="metric"><b id="mNodata">0</b><span>档案为空</span></div>
+    </div>
+  </section>
+
+  <section class="actions">
+    <button class="btn primary" id="btnFill">
+      <span>一键填充</span>
+      <kbd>Alt+Shift+F</kbd>
+    </button>
+    <button class="btn" id="btnPreview">
+      <span>预览识别结果</span>
+      <kbd>Alt+Shift+P</kbd>
+    </button>
+    <div class="row2">
+      <button class="btn" id="btnUndo" disabled>撤销上次填充</button>
+      <button class="btn" id="btnOptions">设置</button>
+    </div>
+  </section>
+
+  <section class="profiles">
+    <label for="profileSelect">使用档案</label>
+    <select id="profileSelect"></select>
+  </section>
+
+  <footer class="ft">
+    <span id="footTip">只在当前页面填表，数据全部保存在本机。</span>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

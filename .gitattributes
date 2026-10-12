@@ -1,0 +1,9 @@
+# 统一换行，避免别人 clone 下来 .bat 变成 LF 导致 cmd 执行异常
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.ico binary
+*.zip binary

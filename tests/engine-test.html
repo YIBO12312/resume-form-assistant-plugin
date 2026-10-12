@@ -1,0 +1,1575 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>网申助手 · 识别引擎自测</title>
+<style>
+  :root { --green:#16a34a; --red:#dc2626; --ink:#111827; --muted:#6b7280; --line:#e5e7eb; --blue:#2563eb; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:28px 32px 60px; background:#f6f7f9; color:var(--ink);
+         font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; font-size:14px; }
+  h1 { margin:0 0 4px; font-size:20px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:18px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:14px; padding:20px 22px; max-width:1000px; }
+  .summary { display:flex; gap:22px; align-items:center; flex-wrap:wrap; margin-bottom:6px; }
+  .big { font-size:30px; font-weight:800; }
+  .big.ok { color:var(--green); }
+  .big.bad { color:var(--red); }
+  .bar { height:10px; border-radius:6px; background:#e5e7eb; overflow:hidden; margin:12px 0 20px; }
+  .bar i { display:block; height:100%; background:var(--green); transition:width .4s ease; }
+  h2 { font-size:14px; margin:22px 0 8px; padding-bottom:6px; border-bottom:1px dashed var(--line); color:var(--blue); }
+  .case { display:flex; gap:9px; padding:5px 0; font-size:13px; align-items:baseline; }
+  .case .m { flex:none; width:16px; }
+  .case.fail { color:var(--red); }
+  .case.fail .detail { display:block; color:#7f1d1d; font-size:12px; margin-top:2px; }
+  .detail { display:none; }
+  .note { font-size:12.5px; color:var(--muted); line-height:1.8; margin-top:18px; }
+  code { background:#f3f4f6; padding:1px 5px; border-radius:4px; font-size:12px; }
+</style>
+</head>
+<body>
+  <h1>网申助手 · 识别引擎自测</h1>
+  <div class="sub" id="env">正在运行…</div>
+  <div class="card">
+    <div class="summary">
+      <div><span class="big" id="pass">–</span> <span style="color:var(--muted)">通过</span></div>
+      <div><span class="big bad" id="fail">–</span> <span style="color:var(--muted)">失败</span></div>
+      <div id="verdict" style="font-weight:700"></div>
+    </div>
+    <div class="bar"><i id="bar" style="width:0%"></i></div>
+    <div id="results"></div>
+    <div class="note">
+      这些用例覆盖真实的网申表单结构：左标签右控件表格、thead 表头列、label for、
+      Ant Design 结构、单选组、分区标题下的同名时间字段、日期格式改写、下拉选项模糊匹配，
+      以及「搜索框 / 验证码 / 密码 / 隐藏元素 / 无语义 name」这些绝不能误填的情况。<br>
+      页面只在本机运行，不会发起任何网络请求。
+    </div>
+  </div>
+
+<script>
+/**
+ * 网申助手 · 字段字典
+ * ------------------------------------------------------------------
+ * 定义网申表单里会遇到的字段：key / 中文标签 / 分组 / 控件类型 / 别名 / 互斥词。
+ * matcher.js 会用 aliases 去匹配页面上的元素，用 avoid 排除误匹配。
+ *
+ * 该文件同时兼容：
+ *   - 扩展 content script（挂到 globalThis.NRFA_SCHEMA）
+ *   - Node 单元测试（module.exports）
+ */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.NRFA_SCHEMA = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  /**
+   * 控件类型说明：
+   *   text / textarea / tel / email / url / number：文本类
+   *   date / month / year：日期类，会按目标控件格式自动改写
+   *   select / radio / checkbox：选项类，会按文本匹配选项
+   *   file：文件类，用于自动挂载简历附件
+   */
+  const FIELD_DEFS = [
+    /* ============================ 基本信息 ============================ */
+    {
+      key: 'name', label: '姓名', group: '基本信息', type: 'text', required: true,
+      aliases: ['姓名', '真实姓名', '名字', '中文名', '本人姓名', '申请人姓名'],
+      // 英文别名一律放进 weakAliases：它们太通用，若与 name/id/class 属性同权重，
+      // name="userName"、class="schoolname" 之类的弱来源会误触发。
+      weakAliases: ['name', 'fullname', 'chinesename', 'yourname'],
+      avoid: ['紧急联系人', '联系人', '父亲', '母亲', '监护人', '推荐人', '负责人', '用户名', '昵称', '英文', '拼音', '学校', '公司', '项目'],
+      placeholder: '请输入姓名'
+    },
+    {
+      key: 'englishName', label: '英文名 / 姓名拼音', group: '基本信息', type: 'text',
+      aliases: ['英文名', '英文姓名', '姓名拼音', '拼音', '姓名的拼音'],
+      placeholder: '如：Zhang San'
+    },
+    {
+      key: 'gender', label: '性别', group: '基本信息', type: 'select', required: true,
+      aliases: ['性别'],
+      weakAliases: ['gender', 'sex'],
+      options: ['男', '女']
+    },
+    {
+      key: 'birth', label: '出生年月', group: '基本信息', type: 'month', required: true,
+      aliases: ['出生年月日', '出生年月', '出生日期', '出生时间', '生日', '出生'],
+      placeholder: '如：2003-05'
+    },
+    {
+      key: 'age', label: '年龄', group: '基本信息', type: 'number',
+      aliases: ['年龄'],
+      placeholder: '如：23'
+    },
+    {
+      key: 'idCard', label: '身份证号', group: '基本信息', type: 'text',
+      aliases: ['身份证号码', '身份证号', '证件号码', '身份证件号', '身份证'],
+      avoid: ['学号', '工号'],
+      placeholder: '18 位身份证号'
+    },
+    {
+      key: 'nation', label: '民族', group: '基本信息', type: 'select',
+      aliases: ['民族'],
+      options: ['汉族', '回族', '满族', '蒙古族', '壮族', '维吾尔族', '其他']
+    },
+    {
+      key: 'nativePlace', label: '籍贯', group: '基本信息', type: 'text',
+      aliases: ['籍贯', '祖籍', '出生地', '生源地'],
+      placeholder: '如：江苏南京'
+    },
+    {
+      key: 'hukou', label: '户口所在地', group: '基本信息', type: 'text',
+      aliases: ['户口所在地', '户籍所在地', '户口所在', '户籍'],
+      placeholder: '如：江苏省南京市'
+    },
+    {
+      key: 'politicalStatus', label: '政治面貌', group: '基本信息', type: 'select',
+      aliases: ['政治面貌'],
+      options: ['中共党员', '中共预备党员', '共青团员', '民主党派', '群众']
+    },
+    {
+      key: 'maritalStatus', label: '婚姻状况', group: '基本信息', type: 'select',
+      aliases: ['婚姻状况', '婚否', '婚姻'],
+      options: ['未婚', '已婚', '离异']
+    },
+    {
+      key: 'height', label: '身高(cm)', group: '基本信息', type: 'number',
+      aliases: ['身高'], placeholder: '如：175'
+    },
+    {
+      key: 'weight', label: '体重(kg)', group: '基本信息', type: 'number',
+      aliases: ['体重'], placeholder: '如：65'
+    },
+    {
+      key: 'address', label: '现居住地 / 通讯地址', group: '基本信息', type: 'text',
+      aliases: ['现居住地', '现居住地址', '居住地址', '通讯地址', '联系地址', '详细地址', '现住址', '家庭住址', '通信地址', '地址'],
+      weakAliases: ['address', 'currentaddress', 'homeaddress', 'mailingaddress'],
+      avoid: ['邮箱', '邮件', '网址', '主页', '学校地址', '公司地址'],
+      placeholder: '如：江苏省南京市玄武区'
+    },
+    {
+      key: 'postalCode', label: '邮编', group: '基本信息', type: 'text',
+      aliases: ['邮政编码', '邮编'],
+      placeholder: '如：210000'
+    },
+
+    /* ============================ 联系方式 ============================ */
+    {
+      key: 'phone', label: '手机号码', group: '联系方式', type: 'tel', required: true,
+      aliases: ['手机号码', '手机号', '联系电话', '移动电话', '手机', '电话'],
+      weakAliases: ['phone', 'mobile', 'mobilephone', 'phonenumber', 'telephone', 'contactnumber', 'cellphone'],
+      avoid: ['紧急联系', '紧急联络', '座机', '固定电话', '区号', '父', '母', '监护'],
+      placeholder: '11 位手机号'
+    },
+    {
+      key: 'email', label: '电子邮箱', group: '联系方式', type: 'email', required: true,
+      aliases: ['电子邮箱', '电子邮件', '常用邮箱', '邮箱地址', '邮箱', 'E-mail', 'Email'],
+      placeholder: '如：your-name@example.com'
+    },
+    {
+      key: 'wechat', label: '微信号', group: '联系方式', type: 'text',
+      aliases: ['微信号', '微信'],
+      placeholder: '微信号'
+    },
+    {
+      key: 'qq', label: 'QQ', group: '联系方式', type: 'text',
+      aliases: ['QQ号码', 'QQ号', 'QQ'],
+      placeholder: 'QQ 号'
+    },
+    {
+      key: 'blog', label: '个人主页 / GitHub', group: '联系方式', type: 'url',
+      aliases: ['个人主页', '个人网站', 'github', 'gitee', '博客地址', '技术博客', '作品集', '个人链接'],
+      placeholder: '如：https://github.com/xxx'
+    },
+    {
+      key: 'emergencyContactName', label: '紧急联系人姓名', group: '联系方式', type: 'text',
+      aliases: ['紧急联系人姓名', '紧急联络人姓名', '紧急联系人', '紧急联络人', '联系人姓名'],
+      avoid: ['关系', '电话', '手机'],
+      placeholder: '紧急联系人姓名'
+    },
+    {
+      key: 'emergencyContactPhone', label: '紧急联系人电话', group: '联系方式', type: 'tel',
+      aliases: ['紧急联系人电话', '紧急联系人手机', '紧急联系电话', '紧急联络电话', '联系人电话', '联系人手机'],
+      placeholder: '紧急联系人电话'
+    },
+    {
+      key: 'emergencyContactRelation', label: '与紧急联系人关系', group: '联系方式', type: 'text',
+      aliases: ['与紧急联系人关系', '与本人关系', '紧急联系人关系', '亲属关系'],
+      placeholder: '如：父子'
+    },
+
+    /* ============================ 教育背景 ============================ */
+    {
+      key: 'school', label: '学校名称', group: '教育背景', type: 'text', required: true,
+      aliases: ['毕业院校', '就读院校', '学校名称', '毕业学校', '院校名称', '学校', '院校'],
+      weakAliases: ['school', 'schoolname', 'university', 'college', 'institution'],
+      avoid: ['公司', '单位', '中学', '高中'],
+      placeholder: '如：某某大学'
+    },
+    {
+      key: 'college', label: '学院 / 院系', group: '教育背景', type: 'text',
+      aliases: ['所在学院', '学院名称', '院系名称', '学院', '院系', '系别'],
+      placeholder: '如：计算机学院'
+    },
+    {
+      key: 'major', label: '专业', group: '教育背景', type: 'text', required: true,
+      aliases: ['所学专业', '专业名称', '专业方向', '专业', '主修专业'],
+      weakAliases: ['major', 'specialty', 'fieldofstudy', 'programme'],
+      placeholder: '如：软件工程'
+    },
+    {
+      key: 'degree', label: '学历', group: '教育背景', type: 'select', required: true,
+      aliases: ['最高学历', '学历层次', '培养层次', '学历'],
+      weakAliases: ['degree', 'education', 'educationlevel', 'highestdegree', 'qualification'],
+      avoid: ['学位'],
+      options: ['大专', '本科', '硕士研究生', '博士研究生', 'MBA', '其他']
+    },
+    {
+      key: 'academicDegree', label: '学位', group: '教育背景', type: 'select',
+      aliases: ['最高学位', '学位类型', '学位'],
+      options: ['学士', '硕士', '博士', '无']
+    },
+    {
+      key: 'eduStart', label: '入学时间', group: '教育背景', type: 'month', section: 'edu',
+      aliases: ['入学时间', '入学年月', '入学日期', '教育开始时间', '就读开始时间', '开始时间', '起始时间'],
+      // 裸的"开始时间"离开分区就无法判断属于哪段经历，因此标为歧义：
+      // 只有推断出"教育背景"分区时才会用它，否则宁可不填。
+      ambiguousAliases: ['开始时间', '起始时间'],
+      placeholder: '如：2023-09'
+    },
+    {
+      key: 'eduEnd', label: '毕业时间', group: '教育背景', type: 'month', section: 'edu',
+      aliases: ['预计毕业时间', '毕业时间', '毕业年月', '毕业日期', '离校时间', '教育结束时间', '就读结束时间', '结束时间', '截止时间'],
+      ambiguousAliases: ['结束时间', '截止时间'],
+      placeholder: '如：2027-06'
+    },
+    {
+      key: 'gpa', label: 'GPA / 平均绩点', group: '教育背景', type: 'text',
+      aliases: ['平均绩点', 'GPA', '绩点', '平均成绩', '加权平均分', '平均分'],
+      placeholder: '如：3.5/4.0'
+    },
+    {
+      key: 'eduRank', label: '专业排名', group: '教育背景', type: 'text',
+      aliases: ['专业排名', '年级排名', '班级排名', '综合排名', '排名'],
+      placeholder: '如：5/120'
+    },
+    {
+      key: 'englishLevel', label: '英语等级', group: '教育背景', type: 'select',
+      aliases: ['英语等级', '英语水平', '外语水平', '英语能力', 'CET', '四六级'],
+      options: ['CET-4', 'CET-6', '专业四级', '专业八级', '雅思', '托福', '无']
+    },
+    {
+      key: 'englishScore', label: '英语分数', group: '教育背景', type: 'text',
+      aliases: ['英语分数', '四级成绩', '六级成绩', 'CET成绩'],
+      placeholder: '如：480'
+    },
+    {
+      key: 'computerLevel', label: '计算机等级', group: '教育背景', type: 'text',
+      aliases: ['计算机等级', '计算机水平', '计算机能力'],
+      placeholder: '如：二级'
+    },
+
+    /* ============================ 求职意向 ============================ */
+    {
+      key: 'jobType', label: '求职类型', group: '求职意向', type: 'select',
+      aliases: ['求职类型', '工作性质', '应聘类型', '职位类型', '求职性质'],
+      options: ['实习', '全职', '兼职', '校园招聘', '社会招聘']
+    },
+    {
+      key: 'expectedPosition', label: '期望职位', group: '求职意向', type: 'text', required: true,
+      aliases: ['应聘职位', '期望职位', '意向岗位', '期望岗位', '申请职位', '目标职位', '应聘岗位', '职位名称', '岗位名称', '应聘方向'],
+      weakAliases: ['position', 'jobtitle', 'appliedposition', 'expectedposition', 'appliedfor'],
+      placeholder: '如：后端开发实习生'
+    },
+    {
+      key: 'expectedCity', label: '期望城市', group: '求职意向', type: 'text',
+      aliases: ['期望工作地点', '期望工作地', '期望城市', '意向城市', '期望地区', '意向工作地', '工作地点', '期望地点'],
+      weakAliases: ['city', 'expectedcity', 'preferredcity', 'worklocation', 'preferredlocation'],
+      placeholder: '如：南京'
+    },
+    {
+      key: 'expectedSalary', label: '期望薪资', group: '求职意向', type: 'text',
+      aliases: ['期望月薪', '期望薪资', '薪资要求', '期望薪水', '期望年薪', '薪资'],
+      placeholder: '如：面议 / 200-300元/天'
+    },
+    {
+      key: 'availableDate', label: '到岗时间', group: '求职意向', type: 'text',
+      aliases: ['最快到岗时间', '可到岗时间', '到岗时间', '入职时间', '可实习时间', '可实习时长', '实习时长', '可开始实习时间'],
+      placeholder: '如：随时到岗'
+    },
+    {
+      key: 'jobSource', label: '招聘信息来源', group: '求职意向', type: 'text',
+      aliases: ['招聘信息来源', '信息来源', '获知渠道', '了解渠道', '得知渠道'],
+      placeholder: '如：校园招聘官网'
+    },
+    {
+      key: 'acceptAdjust', label: '是否服从调剂 / 接受出差', group: '求职意向', type: 'select',
+      aliases: ['是否服从调剂', '服从调剂', '是否接受出差', '接受出差', '是否接受调剂'],
+      options: ['是', '否']
+    },
+
+    /* ========================== 实习 / 工作经历 ========================== */
+    {
+      key: 'intern1Company', label: '实习公司（最近一段）', group: '实习经历', type: 'text',
+      aliases: ['实习公司名称', '实习单位名称', '公司名称', '单位名称', '实习公司', '实习单位', '公司'],
+      avoid: ['学校', '项目'],
+      placeholder: '如：某某科技有限公司'
+    },
+    {
+      key: 'intern1Position', label: '实习职位（最近一段）', group: '实习经历', type: 'text',
+      aliases: ['实习职位', '实习岗位', '担任职位', '职位名称', '岗位名称', '职务'],
+      placeholder: '如：后端开发实习生'
+    },
+    {
+      key: 'intern1Start', label: '实习开始时间', group: '实习经历', type: 'month', section: 'exp',
+      aliases: ['实习开始时间', '实习起始时间', '入职时间', '开始时间', '起始时间'],
+      ambiguousAliases: ['开始时间', '起始时间'],
+      placeholder: '如：2026-08'
+    },
+    {
+      key: 'intern1End', label: '实习结束时间', group: '实习经历', type: 'month', section: 'exp',
+      aliases: ['实习结束时间', '实习离职时间', '离职时间', '结束时间', '截止时间'],
+      ambiguousAliases: ['结束时间', '截止时间'],
+      placeholder: '如：2026-09'
+    },
+    {
+      key: 'internSummary', label: '实习 / 工作经历（整段文字）', group: '实习经历', type: 'textarea', multiline: true,
+      aliases: ['实习及工作经历', '实习工作经历', '工作经历', '实习经历', '实践经历', '工作经验'],
+      placeholder: '粘贴完整实习经历描述'
+    },
+    {
+      key: 'internDuty', label: '实习工作内容 / 岗位职责', group: '实习经历', type: 'textarea', multiline: true,
+      aliases: ['工作内容', '岗位职责', '主要职责', '实习内容', '工作描述', '职责描述', '主要工作'],
+      placeholder: '粘贴岗位职责描述'
+    },
+
+    /* ============================ 项目经历 ============================ */
+    {
+      key: 'projectName', label: '项目名称', group: '项目经历', type: 'text',
+      aliases: ['项目名称', '项目课题'],
+      placeholder: '如：某某数据可视化平台'
+    },
+    {
+      key: 'projectRole', label: '项目角色', group: '项目经历', type: 'text',
+      aliases: ['项目角色', '担任角色', '项目职务'],
+      placeholder: '如：独立开发'
+    },
+    {
+      key: 'projectSummary', label: '项目经历（整段文字）', group: '项目经历', type: 'textarea', multiline: true,
+      aliases: ['项目经历', '项目经验', '项目描述', '项目内容', '项目介绍', '主要项目'],
+      placeholder: '粘贴完整项目经历描述'
+    },
+
+    /* ======================== 自我评价与技能 ======================== */
+    {
+      key: 'selfEvaluation', label: '自我评价', group: '自我评价', type: 'textarea', multiline: true,
+      aliases: ['自我评价', '自我介绍', '个人评价', '个人简介', '个人优势', '自我描述', '个人特长', '自我认知'],
+      weakAliases: ['selfevaluation', 'selfintroduction', 'aboutme', 'personalstatement', 'summary'],
+      placeholder: '粘贴自我评价'
+    },
+    {
+      key: 'skills', label: '专业技能', group: '自我评价', type: 'textarea', multiline: true,
+      aliases: ['专业技能', '技能特长', '掌握技能', '技术栈', '技能', '专业能力'],
+      weakAliases: ['skills', 'skill', 'technicalskills', 'competencies'],
+      placeholder: '如：Java / MySQL / Redis / Hadoop / Flink'
+    },
+    {
+      key: 'awards', label: '获奖情况', group: '自我评价', type: 'textarea', multiline: true,
+      aliases: ['获奖情况', '获奖经历', '所获奖励', '荣誉奖项', '奖励情况', '奖项'],
+      placeholder: '如：校级一等奖学金'
+    },
+    {
+      key: 'campusExperience', label: '校园经历 / 学生工作', group: '自我评价', type: 'textarea', multiline: true,
+      aliases: ['校园经历', '社团经历', '学生工作', '在校经历', '校园实践'],
+      placeholder: '粘贴校园经历'
+    },
+    {
+      key: 'certificate', label: '证书', group: '自我评价', type: 'textarea', multiline: true,
+      aliases: ['资格证书', '已获证书', '证书', '职业资格'],
+      placeholder: '如：软件设计师'
+    },
+    {
+      key: 'languageSkill', label: '语言能力', group: '自我评价', type: 'text',
+      aliases: ['语言能力', '外语能力', '语言水平'],
+      placeholder: '如：英语（CET-6）'
+    },
+    {
+      key: 'hobby', label: '兴趣爱好', group: '自我评价', type: 'textarea', multiline: true,
+      aliases: ['兴趣爱好', '兴趣特长', '爱好'],
+      placeholder: '如：跑步、开源'
+    },
+
+    /* ============================== 附件 ============================== */
+    {
+      key: 'resumeFile', label: '简历附件（自动上传）', group: '附件', type: 'file',
+      aliases: ['简历附件', '上传简历', '简历文件', '上传附件', '附件上传', '选择文件', '上传文件', '附件'],
+      placeholder: '在设置页选择本地简历文件'
+    }
+  ];
+
+  const FIELD_MAP = {};
+  FIELD_DEFS.forEach(function (d) { FIELD_MAP[d.key] = d; });
+
+  const GROUPS = [];
+  FIELD_DEFS.forEach(function (d) {
+    if (GROUPS.indexOf(d.group) === -1) GROUPS.push(d.group);
+  });
+
+  /**
+   * 空白档案模板。
+   * ------------------------------------------------------------------
+   * 仓库里刻意不带任何真实个人数据：所有字段一律为空字符串，
+   * 谁 clone 下来用都不会把别人的信息填进自己的表单。
+   * 字段列表由 FIELD_DEFS 自动生成，增删字段时不会漏项。
+   *
+   * 填入数据的三种方式：
+   *   1. 装好后在设置页「档案字段」逐项填写（左下角会提示还差哪些必填项）
+   *   2. 设置页 →「导入 / 导出」→ 导入 examples/demo-profile.json（示例数据，可直接看效果）
+   *   3. 投不同方向时点「复制当前档案」，各存一份，改掉「期望职位 / 专业技能」
+   */
+  const DEFAULT_PROFILE = {
+    id: 'default',
+    name: '我的档案',
+    updatedAt: 0,
+    fields: (function () {
+      const blank = {};
+      FIELD_DEFS.forEach(function (d) { blank[d.key] = ''; });
+      return blank;
+    })()
+  };
+
+  /** 默认全局设置 */
+  const DEFAULT_SETTINGS = {
+    activeProfileId: 'default',
+    fabMode: 'auto',            // auto | always | never
+    autoFillOnLoad: false,      // 进页面自动填（默认关闭，避免误填）
+    highlightFilled: true,      // 填充后高亮
+    fillEmptyOnly: true,        // 只填空白字段，不覆盖已填内容
+    triggerEvents: true,        // 派发 input/change/blur，兼容 React/Vue
+    fillFileInput: true,        // 自动把简历挂到 file 控件
+    matchThreshold: 66,         // 匹配分数阈值
+    customFields: [],           // [{key,label,aliases:[],type,value}]
+    siteRules: {},              // { "hostname": [{selector, fieldKey}] }
+    lastFillAt: 0
+  };
+
+  return {
+    FIELD_DEFS: FIELD_DEFS,
+    FIELD_MAP: FIELD_MAP,
+    GROUPS: GROUPS,
+    DEFAULT_PROFILE: DEFAULT_PROFILE,
+    DEFAULT_SETTINGS: DEFAULT_SETTINGS
+  };
+});
+
+</script>
+<script>
+/**
+ * 网申助手 · 字段识别引擎
+ * ------------------------------------------------------------------
+ * 设计要点：
+ *  1. 归一化：全角转半角、去空白与标点、去"请输入/请选择/必填"等噪声词，
+ *     这样 "姓 名："、"*姓名"、"请输入姓名" 都能归一到 "姓名"。
+ *  2. 多来源取证：<label for>、包裹 label、aria-label、placeholder、
+ *     表格 (th / 首列单元格)、dl>dt、唯一控件的祖先容器文本、前置兄弟节点、
+ *     以及 name/id/class 兜底，每个来源带不同置信权重。
+ *  3. 最长别名胜出：所有别名参与打分，score = 来源权重 + min(别名长度,10)*3，
+ *     因此 "紧急联系人姓名" 一定赢过 "姓名"，避免填错人。
+ *  4. avoid 硬排除：如 电话 字段遇到 "紧急联系人电话" 直接放弃匹配。
+ *  5. 分区推断：向上找最近的标题（h1-h6 / legend / .title 等），
+ *     推断 教育/实习/项目/求职意向 分区；分区不符的字段降权，
+ *     解决 "开始时间/结束时间" 这类跨分区同名字段。
+ *  6. 日期自适应：按控件 type / placeholder / maxlength 改写为 YYYY-MM-DD、
+ *     YYYY-MM、YYYY年MM月 等格式。
+ */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.NRFA_MATCHER = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  /* ============================== 归一化 ============================== */
+
+  const NOISE_WORDS = [
+    '请输入', '请填写', '请选择', '请上传', '请提供', '请补充', '请说明',
+    '必填项', '非必填', '必填', '选填', 'required', 'optional',
+    '格式要求', '格式为', '示例', '例如', '举例',
+    '字符以内', '字以内', '个字符', '最多', '最少', '不超过', '不能超过'
+  ];
+
+  function toHalfWidth(str) {
+    let out = '';
+    for (let i = 0; i < str.length; i++) {
+      const code = str.charCodeAt(i);
+      if (code === 0x3000) out += '';
+      else if (code >= 0xff01 && code <= 0xff5e) out += String.fromCharCode(code - 0xfee0);
+      else out += str[i];
+    }
+    return out;
+  }
+
+  /** 把任意文本归一成可用于 includes 匹配的纯字符串 */
+  function normalize(input) {
+    if (input === null || input === undefined) return '';
+    let s = toHalfWidth(String(input));
+    s = s.toLowerCase();
+    // 去掉所有非中英文数字字符（标点、空白、星号、括号全部消失）
+    s = s.replace(/[^0-9a-z\u4e00-\u9fa5]+/g, '');
+    for (let i = 0; i < NOISE_WORDS.length; i++) {
+      const w = NOISE_WORDS[i];
+      const nw = w.replace(/[^0-9a-z\u4e00-\u9fa5]+/g, '');
+      if (nw && s.indexOf(nw) !== -1) s = s.split(nw).join('');
+    }
+    return s;
+  }
+
+  /* ============================ 元素可见性 ============================ */
+
+  function isVisible(el, opts) {
+    if (!el || el.nodeType !== 1) return false;
+    if (opts && opts.ignoreVisibility) return true;
+    if (el.hidden) return false;
+    const style = el.ownerDocument && el.ownerDocument.defaultView
+      ? el.ownerDocument.defaultView.getComputedStyle(el)
+      : null;
+    if (style) {
+      if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+      if (style.opacity === '0') return false;
+    }
+    if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
+    if (typeof el.getClientRects === 'function') {
+      const rects = el.getClientRects();
+      if (!rects || rects.length === 0) return false;
+      const r = rects[0];
+      if (r.width === 0 && r.height === 0) return false;
+    }
+    return true;
+  }
+
+  const SKIP_PATTERNS = /(search|搜索|查询|验证码|captcha|verifycode|checkcode|smscode|密码|password|passwd|短信|subscribe|订阅|newsletter)/i;
+  const SKIP_TYPES = ['hidden', 'password', 'submit', 'button', 'reset', 'image', 'range', 'color', 'search', 'file'];
+
+  /** 是否是一个值得考虑填充的控件 */
+  function isCandidate(el, opts) {
+    if (!el || el.nodeType !== 1) return false;
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag !== 'input' && tag !== 'select' && tag !== 'textarea') return false;
+    if (el.disabled) return false;
+    if (el.closest && el.closest('[data-nrfa-ui]')) return false;
+    // 跳过扩展自己注入到 Shadow DOM 里的元素
+    const rootNode = el.getRootNode ? el.getRootNode() : null;
+    if (rootNode && rootNode.host) return false;
+    if (!isVisible(el, opts)) return false;
+
+    const type = (el.getAttribute('type') || 'text').toLowerCase();
+    if (tag === 'input' && type === 'file') {
+      // 文件控件只在需要挂简历时才考虑
+      return !!(opts && opts.allowFile);
+    }
+    if (tag === 'input' && SKIP_TYPES.indexOf(type) !== -1) return false;
+
+    const sig = [el.getAttribute('name'), el.getAttribute('id'), el.getAttribute('placeholder'),
+      el.getAttribute('class'), el.getAttribute('aria-label')].join(' ');
+    if (SKIP_PATTERNS.test(sig)) return false;
+
+    return true;
+  }
+
+  /* ========================== 取值来源（取证） ========================== */
+
+  function ownTextOf(labelEl, excludeEl) {
+    // label 的文本，剔除嵌套控件自身的文本
+    let text = '';
+    const walk = function (node) {
+      if (node.nodeType === 3) { text += node.nodeValue; return; }
+      if (node.nodeType !== 1) return;
+      if (excludeEl && (node === excludeEl || (node.contains && excludeEl && node.contains(excludeEl) && node !== labelEl))) {
+        // 跳过包含目标控件的子树
+        if (!(node === labelEl)) return;
+      }
+      for (let i = 0; i < node.childNodes.length; i++) walk(node.childNodes[i]);
+    };
+    walk(labelEl);
+    return text;
+  }
+
+  function labelForElement(el) {
+    const doc = el.ownerDocument;
+    if (!doc) return null;
+    if (el.labels && el.labels.length) return el.labels[0];
+    const id = el.getAttribute('id');
+    if (id && doc.querySelector) {
+      try {
+        return doc.querySelector('label[for="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+      } catch (e) { /* 忽略非法选择器 */ }
+    }
+    return null;
+  }
+
+  function countControls(node) {
+    if (!node.querySelectorAll) return 0;
+    return node.querySelectorAll('input,select,textarea').length;
+  }
+
+  /** 取某个单选项自身的选项文本（"男" / "Female"） */
+  function optionLabelOf(input) {
+    const lab = input.closest ? input.closest('label') : null;
+    if (lab) {
+      const t = ownTextOf(lab, input).trim();
+      if (t) return t;
+    }
+    const forLab = labelForElement(input);
+    if (forLab && forLab !== lab) {
+      const t = ownTextOf(forLab, input).trim();
+      if (t) return t;
+    }
+    // 控件紧随其后的文本节点，如 <input type=radio>男
+    let n = input.nextSibling;
+    while (n) {
+      if (n.nodeType === 3 && n.nodeValue && n.nodeValue.trim()) return n.nodeValue.trim();
+      if (n.nodeType === 1) break;
+      n = n.nextSibling;
+    }
+    return '';
+  }
+
+  /**
+   * 找出单选/复选组的「问题容器」。
+   * 规则：向上找到第一个「包含的控件个数恰好等于本组控件个数」的祖先，
+   * 这样容器里只有这道题，把各选项文本剔除后剩下的就是题干（如 "性别 男 女" → "性别"）。
+   * 找不到就返回 null，宁可识别不出也不猜错。
+   */
+  function radioGroupOf(el) {
+    const type = (el.getAttribute && el.getAttribute('type') || '').toLowerCase();
+    if (type !== 'radio' && type !== 'checkbox') return null;
+    const doc = el.ownerDocument;
+    const name = el.getAttribute('name');
+    let radios = null;
+
+    if (name) {
+      const all = doc.querySelectorAll('input[name="' + name + '"]');
+      radios = Array.prototype.filter.call(all, function (r) {
+        return (r.getAttribute('type') || '').toLowerCase() === type;
+      });
+    }
+    if (!radios || radios.length < 2) {
+      let node = el.parentElement;
+      while (node) {
+        const same = Array.prototype.filter.call(
+          node.querySelectorAll('input'),
+          function (r) { return (r.getAttribute('type') || '').toLowerCase() === type; }
+        );
+        if (same.length >= 2) { radios = same; break; }
+        node = node.parentElement;
+      }
+    }
+    if (!radios || radios.length < 2) return null;
+
+    // 问题容器：控件个数恰好等于本组个数的最近祖先
+    let container = null;
+    let node2 = el.parentElement;
+    while (node2) {
+      const count = node2.querySelectorAll('input,select,textarea').length;
+      if (count === radios.length) { container = node2; break; }
+      node2 = node2.parentElement;
+    }
+    return {
+      radios: Array.prototype.slice.call(radios),
+      container: container
+    };
+  }
+
+  function cellsOfRow(row) {
+    const out = [];
+    for (let i = 0; i < row.children.length; i++) {
+      const c = row.children[i];
+      if (c.tagName === 'TD' || c.tagName === 'TH') out.push(c);
+    }
+    return out;
+  }
+
+  /**
+   * 收集一个控件的所有候选上下文文本
+   * @returns {Array<{text:string, raw:string, source:string, weight:number}>}
+   */
+  function collectContext(el, opts) {
+    opts = opts || {};
+    const excludeTexts = (opts.excludeTexts || []).map(normalize).filter(Boolean);
+    const picked = [];
+    const seen = {};
+
+    const push = function (raw, source, weight) {
+      if (!raw) return;
+      let text = String(raw);
+      if (text.length > 120) text = text.slice(0, 120);
+      for (let i = 0; i < excludeTexts.length; i++) {
+        // 逐字符剔除选项文本（用于单选组：容器文本 "性别 男 女" → "性别"）
+        if (excludeTexts[i]) {
+          const norm = normalize(text);
+          if (norm.indexOf(excludeTexts[i]) !== -1) {
+            text = text.split(excludeTexts[i]).join(' ');
+          }
+        }
+      }
+      const n = normalize(text);
+      if (!n || n.length > 60) return;
+      const dedupeKey = source + '|' + n;
+      if (seen[dedupeKey]) return;
+      seen[dedupeKey] = 1;
+      picked.push({ text: n, raw: String(raw).slice(0, 120), source: source, weight: weight });
+    };
+
+    /* 1. 显式 label */
+    const lab = labelForElement(el);
+    if (lab) push(ownTextOf(lab, el), 'label', 100);
+
+    /* 2. 包裹型 label（排除自身选项文本，兼容单选） */
+    const wrapLabel = el.closest ? el.closest('label') : null;
+    if (wrapLabel && wrapLabel !== lab) {
+      let t = ownTextOf(wrapLabel, el);
+      push(t, 'label', 99);
+    }
+
+    /* 3. aria / title / data-* */
+    push(el.getAttribute && el.getAttribute('aria-label'), 'aria', 90);
+    push(el.getAttribute && el.getAttribute('title'), 'title', 86);
+    if (el.getAttribute) {
+      push(el.getAttribute('data-label') || el.getAttribute('data-name') ||
+        el.getAttribute('data-title') || el.getAttribute('data-field'), 'data', 88);
+    }
+
+    /* 4. placeholder */
+    push(el.getAttribute && el.getAttribute('placeholder'), 'placeholder', 84);
+
+    /* 5. 表格布局（网申系统最常见） */
+    if (el.closest) {
+      const cell = el.closest('td,th');
+      if (cell) {
+        const row = cell.closest('tr');
+        if (row) {
+          const cells = cellsOfRow(row);
+          const myIdx = cells.indexOf(cell);
+          // 5a. 表头列（thead 或第一行 th）
+          const table = row.closest('table');
+          if (table) {
+            const headRow = table.querySelector('thead tr') ||
+              (table.rows && table.rows.length && table.rows[0] !== row && table.rows[0].querySelectorAll('th').length ? table.rows[0] : null);
+            if (headRow && myIdx >= 0) {
+              const headCells = cellsOfRow(headRow);
+              if (headCells[myIdx]) push(headCells[myIdx].textContent, 'tableHead', 96);
+            }
+          }
+          // 5b. 同行首列是标签列
+          if (myIdx > 0 && cells[0]) push(cells[0].textContent, 'rowLabel', 95);
+          // 5c. 同格内嵌标签（label 已在上面处理）
+        }
+      }
+
+      /* 6. dl > dt */
+      const dd = el.closest('dd');
+      if (dd && dd.previousElementSibling && dd.previousElementSibling.tagName === 'DT') {
+        push(dd.previousElementSibling.textContent, 'dt', 95);
+      }
+    }
+
+    /* 7. 单选 / 复选组：用「剔除选项文本后的题干」作为上下文 */
+    const group = radioGroupOf(el);
+    if (group && group.container) {
+      let gtext = group.container.textContent || '';
+      group.radios.forEach(function (r) {
+        const label = optionLabelOf(r);
+        if (label) gtext = gtext.split(label).join(' ');
+      });
+      push(gtext, 'groupLabel', 93);
+      const prev = group.container.previousElementSibling;
+      if (prev && (!prev.querySelector || !prev.querySelector('input,select,textarea'))) {
+        push(prev.textContent, 'groupPrev', 91);
+      }
+    }
+
+    /* 8. 前置兄弟节点文本 */
+    let sib = el.previousElementSibling;
+    let sibCount = 0;
+    while (sib && sibCount < 3) {
+      if (!sib.querySelector || !sib.querySelector('input,select,textarea')) {
+        push(sib.textContent, 'sibling', 82 - sibCount * 4);
+      }
+      sib = sib.previousElementSibling;
+      sibCount++;
+    }
+
+    /* 9. 祖先容器文本：仅当该容器内只有当前一个控件时采用（避免串行误配） */
+    let node = el.parentElement;
+    let level = 0;
+    while (node && level < 4) {
+      if (countControls(node) === 1) {
+        push(node.textContent, 'ancestor' + level, 80 - level * 5);
+      }
+      node = node.parentElement;
+      level++;
+    }
+
+    /* 10. 属性兜底 */
+    push(el.getAttribute && el.getAttribute('name'), 'name', 62);
+    push(el.getAttribute && el.getAttribute('id'), 'id', 58);
+    const cls = el.getAttribute && el.getAttribute('class');
+    if (cls) push(cls, 'class', 44);
+
+    return picked;
+  }
+
+  /* ============================== 分区推断 ============================== */
+
+  const SECTION_RULES = [
+    { section: 'edu', re: /(教育经历|教育背景|教育信息|学习经历|学历信息|学历背景|就读经历|教育情况)/ },
+    { section: 'exp', re: /(实习经历|实习经验|工作经历|工作经验|职业经历|实习信息|工作信息|实践经历)/ },
+    { section: 'project', re: /(项目经历|项目经验|项目信息|科研经历|项目情况)/ },
+    { section: 'intent', re: /(求职意向|应聘意向|求职意愿|意向信息|岗位意向)/ },
+    { section: 'basic', re: /(基本信息|个人信息|个人资料|基础信息|联系方式)/ }
+  ];
+
+  function sectionOfText(text) {
+    const t = String(text || '').replace(/\s/g, '');
+    if (!t || t.length > 40) return null;
+    for (let i = 0; i < SECTION_RULES.length; i++) {
+      if (SECTION_RULES[i].re.test(t)) return SECTION_RULES[i].section;
+    }
+    return null;
+  }
+
+  function isHeadingLike(el) {
+    if (!el || !el.tagName) return false;
+    if (/^H[1-6]$/.test(el.tagName)) return true;
+    if (el.tagName === 'LEGEND' || el.tagName === 'CAPTION' || el.tagName === 'SUMMARY') return true;
+    const cls = (el.getAttribute && (el.getAttribute('class') || '')) + ' ' +
+      (el.getAttribute && (el.getAttribute('role') || ''));
+    return /(title|heading|header|section|legend|subtitle|panel-head|card-head|group)/i.test(cls);
+  }
+
+  /** 向上寻找最近的、能识别出分区的标题文本 */
+  function inferSection(el) {
+    if (!el) return null;
+
+    const fs = el.closest && el.closest('fieldset');
+    if (fs) {
+      const lg = fs.querySelector('legend');
+      if (lg) { const s = sectionOfText(lg.textContent); if (s) return s; }
+    }
+
+    let node = el;
+    let level = 0;
+    while (node && level < 6) {
+      let sib = node.previousElementSibling;
+      let guard = 0;
+      while (sib && guard < 10) {
+        const s = sectionOfText(sib.textContent);
+        if (s) return s;
+        // 标题类元素内容也可能就是分区名
+        if (isHeadingLike(sib)) {
+          const s2 = sectionOfText(sib.textContent);
+          if (s2) return s2;
+        }
+        sib = sib.previousElementSibling;
+        guard++;
+      }
+      // 父容器自身若带 title/heading 类名，取它自己的直接文本
+      if (node.parentElement && isHeadingLike(node.parentElement)) {
+        const s3 = sectionOfText(node.parentElement.textContent);
+        if (s3) return s3;
+      }
+      node = node.parentElement;
+      level++;
+    }
+    return null;
+  }
+
+  /* ============================== 匹配打分 ============================== */
+
+  /**
+   * 构建匹配索引：把字段别名归一化并缓存
+   * 别名分三类：
+   *   - 普通别名：正常权重
+   *   - weakAliases：英文/极短通用词，扣 22 分，避免被 name/id/class 等弱来源误触发
+   *   - ambiguousAliases：脱离分区就无法判断归属的别名（如裸的"开始时间"），
+   *     在没有推断出分区时直接放弃匹配，宁可不填也不填错
+   */
+  function buildIndex(fields) {
+    return fields.map(function (f) {
+      const ambiguous = (f.ambiguousAliases || []).map(normalize);
+      const list = [];
+      const seen = {};
+      const addAlias = function (raw, weak) {
+        const a = normalize(raw);
+        if (!a || a.length < 2 || seen[a]) return;
+        seen[a] = 1;
+        list.push({ a: a, weak: !!weak, ambiguous: ambiguous.indexOf(a) !== -1 });
+      };
+      (f.aliases || []).forEach(function (a) { addAlias(a, false); });
+      (f.weakAliases || []).forEach(function (a) { addAlias(a, true); });
+      return {
+        field: f,
+        key: f.key,
+        aliases: list,
+        avoids: (f.avoid || []).map(normalize).filter(Boolean),
+        section: f.section || null,
+        type: f.type || 'text'
+      };
+    });
+  }
+
+  function typeCompatible(field, el) {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const it = (el.getAttribute && el.getAttribute('type') || 'text').toLowerCase();
+    const ftype = field.type || 'text';
+
+    // 文件类只与文件控件互配
+    if (tag === 'input' && it === 'file') return ftype === 'file';
+    if (ftype === 'file') return false;
+
+    if (tag === 'input') {
+      if (['hidden', 'password', 'submit', 'button', 'reset', 'image', 'checkbox', 'range', 'color', 'search'].indexOf(it) !== -1) return false;
+      if (it === 'radio') return ftype === 'select' || ftype === 'radio';
+      if (it === 'email') return ftype === 'email';
+      return true;
+    }
+    // textarea 也能承载普通文本字段（很多网申把"现居住地/籍贯"做成多行框），
+    // 只是长文本字段会拿到额外加分，优先胜出。
+    if (tag === 'textarea') {
+      return ftype !== 'file';
+    }
+    if (tag === 'select') return ftype === 'select' || ftype === 'text' || ftype === 'month' || ftype === 'date' || ftype === 'number';
+    if (tag === 'div' || tag === 'span' || tag === 'a' || tag === 'button') return true;
+    return false;
+  }
+
+  /**
+   * 核心打分
+   * @param {Array} ctx collectContext 的结果
+   * @param {string|null} section inferSection 的结果
+   * @param {Array} index buildIndex 的结果
+   * @param {number} threshold
+   * @param {Element} [el] 目标控件，用于控件类型加成
+   */
+  function pickBest(ctx, section, index, threshold, el) {
+    const tag = el && el.tagName ? el.tagName.toLowerCase() : '';
+    const it = el && el.getAttribute ? (el.getAttribute('type') || 'text').toLowerCase() : '';
+    let best = null;
+    for (let i = 0; i < index.length; i++) {
+      const entry = index[i];
+      if (!entry.aliases.length) continue;
+      for (let a = 0; a < entry.aliases.length; a++) {
+        const al = entry.aliases[a];
+        // 分区未知时，不拿"开始时间"这类歧义别名去猜
+        if (al.ambiguous && !section) continue;
+        for (let c = 0; c < ctx.length; c++) {
+          const item = ctx[c];
+          if (item.text.indexOf(al.a) === -1) continue;
+
+          // 硬排除：该字段不适合出现在这种上下文里
+          let avoided = false;
+          for (let v = 0; v < entry.avoids.length; v++) {
+            if (item.text.indexOf(entry.avoids[v]) !== -1) { avoided = true; break; }
+          }
+          if (avoided) continue;
+
+          let score = item.weight + Math.min(al.a.length, 10) * 3;
+          if (al.weak) score -= 22;
+          if (entry.section && section && entry.section !== section) score -= 26;
+          if (item.text === al.a) score += 4;
+          // 控件类型加成：让多行框优先配长文本字段、tel 框优先配手机号
+          if (tag === 'textarea' && entry.type === 'textarea') score += 8;
+          if (it === 'tel' && entry.type === 'tel') score += 6;
+
+          if (!best || score > best.score) {
+            best = {
+              fieldKey: entry.key,
+              field: entry.field,
+              score: score,
+              alias: al.a,
+              source: item.source,
+              matchedText: item.text
+            };
+          }
+        }
+      }
+    }
+    if (!best) return null;
+    const limit = typeof threshold === 'number' ? threshold : 66;
+    return best.score >= limit ? best : null;
+  }
+
+  /* ============================== 值格式化 ============================== */
+
+  /** 从各种写法里解析年月日 */
+  function parseDateParts(value) {
+    if (value === null || value === undefined) return null;
+    const s = toHalfWidth(String(value)).trim();
+    if (!s) return null;
+    if (/至今|现在|now|present|无/i.test(s)) return { raw: s, ongoing: true };
+
+    let m = s.match(/^(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})/);
+    if (m) return { y: m[1], m: pad2(m[2]), d: pad2(m[3]) };
+
+    m = s.match(/^(\d{4})\s*[-/.年]\s*(\d{1,2})/);
+    if (m) return { y: m[1], m: pad2(m[2]), d: null };
+
+    m = s.match(/^(\d{4})\s*年?\s*$/);
+    if (m) return { y: m[1], m: null, d: null };
+
+    m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (m) return { y: m[1], m: pad2(m[2]), d: pad2(m[3]) };
+
+    m = s.match(/^(\d{4})(\d{2})$/);
+    if (m) return { y: m[1], m: pad2(m[2]), d: null };
+
+    return { raw: s };
+  }
+
+  function pad2(v) { return String(v).length === 1 ? '0' + v : String(v); }
+
+  /**
+   * 按目标控件的要求改写取值
+   */
+  function formatValue(value, el, field) {
+    if (value === null || value === undefined || value === '') return '';
+    const str = String(value);
+    const type = (el && el.getAttribute && el.getAttribute('type') || '').toLowerCase();
+    const placeholder = (el && el.getAttribute && el.getAttribute('placeholder') || '');
+    const maxLength = el && el.getAttribute ? parseInt(el.getAttribute('maxlength'), 10) : NaN;
+
+    const wantsDate = type === 'date' || type === 'month' ||
+      (field && (field.type === 'date' || field.type === 'month')) ||
+      /(yyyy|yy|年|月|日)/i.test(placeholder);
+
+    const parts = parseDateParts(str);
+    if (parts && parts.ongoing) return str;
+    if (!wantsDate || !parts || !parts.y) return str;
+
+    const y = parts.y, mm = parts.m || '01', dd = parts.d || '01';
+
+    if (type === 'date') return y + '-' + mm + '-' + dd;
+    if (type === 'month') return y + '-' + mm;
+
+    const ph = toHalfWidth(placeholder);
+    if (/yyyy\s*年\s*mm\s*月\s*dd/i.test(ph)) return y + '年' + mm + '月' + dd + '日';
+    if (/yyyy\s*年\s*mm\s*月/i.test(ph)) return y + '年' + mm + '月';
+    if (/yyyy\s*年/i.test(ph) && !/mm/i.test(ph)) return y + '年';
+    if (/yyyy-mm-dd/i.test(ph)) return y + '-' + mm + '-' + dd;
+    if (/yyyy\/mm\/dd/i.test(ph)) return y + '/' + mm + '/' + dd;
+    if (/yyyy\.mm\.dd/i.test(ph)) return y + '.' + mm + '.' + dd;
+    if (/yyyy-mm/i.test(ph)) return y + '-' + mm;
+    if (/yyyy\/mm/i.test(ph)) return y + '/' + mm;
+    if (/yyyymmdd/i.test(ph)) return y + mm + dd;
+    if (/yyyymm/i.test(ph)) return y + mm;
+
+    if (!isNaN(maxLength) && maxLength === 4) return y;
+    if (!isNaN(maxLength) && maxLength === 7) return y + '-' + mm;
+    if (!isNaN(maxLength) && maxLength === 10) return y + '-' + mm + '-' + dd;
+
+    // 中文界面默认「YYYY-MM」，仅在原值缺月份时补全
+    if (!parts.m) return y;
+    return str;
+  }
+
+  /* ============================== 选项匹配 ============================== */
+
+  const VALUE_SYNONYMS = {
+    '男': ['男', '男性', 'male', 'm', 'man', 'boy', '先生'],
+    '女': ['女', '女性', 'female', 'f', 'woman', 'girl', '女士'],
+    '本科': ['本科', '大学本科', '全日制本科', 'bachelor', 'undergraduate', 'bs', 'ba', '学士'],
+    '大专': ['大专', '专科', '高职', 'college', 'associate'],
+    '硕士研究生': ['硕士研究生', '硕士', '研究生', 'master', 'msc', 'ms'],
+    '博士研究生': ['博士研究生', '博士', 'doctor', 'phd'],
+    '学士': ['学士', 'bachelor', '本科'],
+    '硕士': ['硕士', 'master', '研究生'],
+    '是': ['是', 'yes', 'y', 'true', '接受', '愿意', '同意', '可以', '服从'],
+    '否': ['否', 'no', 'n', 'false', '不接受', '不愿意', '不同意', '不可以', '不服从'],
+    '汉族': ['汉族', '汉', 'han'],
+    '未婚': ['未婚', 'single', 'unmarried'],
+    '已婚': ['已婚', 'married'],
+    '群众': ['群众', '普通群众', '无党派', 'masses'],
+    '共青团员': ['共青团员', '团员', 'league member'],
+    '中共党员': ['中共党员', '党员', '中国共产党党员', 'ccp member'],
+    'CET-6': ['cet-6', 'cet6', '大学英语六级', '英语六级', '六级'],
+    'CET-4': ['cet-4', 'cet4', '大学英语四级', '英语四级', '四级'],
+    '实习': ['实习', 'intern', 'internship', '实习生'],
+    '全职': ['全职', 'full-time', 'fulltime', '正式'],
+    '随时到岗': ['随时到岗', '随时', '立即', '即刻', 'immediately', 'now', '一周内'],
+    '面议': ['面议', 'negotiable', '可谈']
+  };
+
+  function optionVariants(value) {
+    const v = normalize(value);
+    const out = [v];
+    const keys = Object.keys(VALUE_SYNONYMS);
+    for (let i = 0; i < keys.length; i++) {
+      const variants = VALUE_SYNONYMS[keys[i]].map(normalize);
+      if (variants.indexOf(v) !== -1 || normalize(keys[i]) === v) {
+        for (let j = 0; j < variants.length; j++) {
+          if (out.indexOf(variants[j]) === -1) out.push(variants[j]);
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 在候选选项文本里挑出最匹配 value 的那个
+   * @param {string} value 想要的值
+   * @param {Array<string>} options 页面上的选项文本
+   * @returns {string|null} 命中的原始选项文本
+   */
+  function chooseOption(value, options) {
+    if (!value || !options || !options.length) return null;
+    const variants = optionVariants(value);
+
+    // 1. 精确归一化相等
+    for (let i = 0; i < options.length; i++) {
+      const n = normalize(options[i]);
+      if (!n) continue;
+      for (let v = 0; v < variants.length; v++) {
+        if (n === variants[v]) return options[i];
+      }
+    }
+    // 2. 选项包含目标值（"本科（学士）" 命中 "本科"）
+    for (let i = 0; i < options.length; i++) {
+      const n = normalize(options[i]);
+      if (!n) continue;
+      for (let v = 0; v < variants.length; v++) {
+        if (variants[v].length >= 2 && n.indexOf(variants[v]) !== -1) return options[i];
+      }
+    }
+    // 3. 目标值包含选项（"硕士研究生" 命中 "硕士"）
+    for (let i = 0; i < options.length; i++) {
+      const n = normalize(options[i]);
+      if (!n || n.length < 2) continue;
+      for (let v = 0; v < variants.length; v++) {
+        if (variants[v].indexOf(n) !== -1) return options[i];
+      }
+    }
+    return null;
+  }
+
+  /* ============================== 对外 API ============================== */
+
+  function matchElement(el, opts) {
+    opts = opts || {};
+    // 隐藏元素永不参与匹配（content.js 会再过滤一次，这里做兜底）
+    if (!opts.ignoreVisibility && !isVisible(el, opts)) return null;
+    const index = opts.index || buildIndex(opts.fields || []);
+    const ctx = collectContext(el, opts);
+    const section = inferSection(el);
+    const hit = pickBest(ctx, section, index, opts.threshold, el);
+    if (!hit || !typeCompatible(hit.field, el)) return null;
+    hit.section = section;
+    return hit;
+  }
+
+  function isSelectLike(el) {
+    if (!el) return false;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'select') return true;
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    if (role === 'combobox' || role === 'listbox') return true;
+    const cls = el.getAttribute('class') || '';
+    if (/(ant-select|el-select|ivu-select|el-cascader|ant-cascader|semi-select|next-select|arco-select)/i.test(cls)) return true;
+    const p = el.closest && el.closest('.ant-select,.el-select,.ivu-select,.semi-select,.next-select,.arco-select,[role="combobox"]');
+    return !!p;
+  }
+
+  return {
+    normalize: normalize,
+    toHalfWidth: toHalfWidth,
+    isVisible: isVisible,
+    isCandidate: isCandidate,
+    collectContext: collectContext,
+    inferSection: inferSection,
+    buildIndex: buildIndex,
+    typeCompatible: typeCompatible,
+    pickBest: pickBest,
+    matchElement: matchElement,
+    radioGroupOf: radioGroupOf,
+    optionLabelOf: optionLabelOf,
+    parseDateParts: parseDateParts,
+    formatValue: formatValue,
+    chooseOption: chooseOption,
+    optionVariants: optionVariants,
+    sectionOfText: sectionOfText,
+    isSelectLike: isSelectLike,
+    NOISE_WORDS: NOISE_WORDS
+  };
+});
+
+</script>
+<script>
+/**
+ * 识别引擎测试用例（浏览器 / Node 双端共用）
+ * 只依赖注入进来的 document、M(matcher)、S(schema)，不依赖任何宿主环境。
+ */
+(function (root) {
+  'use strict';
+
+  const FIXTURES = {
+    // 网申系统最常见的「左标签 右控件」表格布局
+    tableLayout: `
+      <table>
+        <thead><tr><th>字段</th><th>内容</th></tr></thead>
+        <tbody>
+          <tr><td>姓名</td><td><input type="text" id="f1"></td></tr>
+          <tr><td>手机号码</td><td><input type="text" id="f2"></td></tr>
+          <tr><td>电子邮箱</td><td><input type="text" id="f3"></td></tr>
+          <tr><td>紧急联系人姓名</td><td><input type="text" id="f4"></td></tr>
+          <tr><td>紧急联系人电话</td><td><input type="text" id="f5"></td></tr>
+        </tbody>
+      </table>`,
+
+    // 表头列布局（thead 里写字段名）
+    headColumnLayout: `
+      <table>
+        <thead><tr><th>姓名</th><th>最高学历</th><th>期望城市</th></tr></thead>
+        <tbody><tr>
+          <td><input type="text" id="h1"></td>
+          <td><select id="h2"><option>请选择</option><option>大专</option><option>本科</option><option>硕士研究生</option></select></td>
+          <td><input type="text" id="h3"></td>
+        </tr></tbody>
+      </table>`,
+
+    // 标签放在自己的 td 里，控件在下一个 td
+    labelInCell: `
+      <table><tbody>
+        <tr><td><label>所学专业</label></td><td><input type="text" id="c1"></td></tr>
+        <tr><td><span>毕业院校</span><span class="req">*</span></td><td><input type="text" id="c2"></td></tr>
+        <tr><td>政治面貌：</td><td><input type="text" id="c3"></td></tr>
+      </tbody></table>`,
+
+    labelFor: `
+      <div class="form-item"><label for="a1">毕业院校</label><input id="a1" type="text"></div>
+      <div class="form-item"><label for="a2">所学专业</label><input id="a2" type="text"></div>
+      <div class="form-item"><label for="a3">最高学历</label>
+        <select id="a3"><option value="">请选择</option><option>大专</option><option>本科</option><option>硕士研究生</option></select>
+      </div>
+      <div class="form-item"><label for="a4">预计毕业时间</label><input id="a4" type="text" placeholder="YYYY-MM"></div>`,
+
+    antdStyle: `
+      <div class="ant-form-item">
+        <div class="ant-form-item-label"><label>期望职位</label></div>
+        <div class="ant-form-item-control"><input class="ant-input" type="text" placeholder="请输入期望职位"></div>
+      </div>
+      <div class="ant-form-item">
+        <div class="ant-form-item-label"><label>期望城市</label></div>
+        <div class="ant-form-item-control"><input class="ant-input" type="text" placeholder="请输入"></div>
+      </div>`,
+
+    radioGender: `
+      <div class="field">
+        <span class="label">性别</span>
+        <label><input type="radio" name="gender" value="1">男</label>
+        <label><input type="radio" name="gender" value="2">女</label>
+      </div>`,
+
+    // 同一份表单里出现两组「开始/结束时间」，靠分区标题区分
+    sectioned: `
+      <div class="card">
+        <div class="card-title">教育经历</div>
+        <div class="row"><label>开始时间</label><input id="s1" type="text" placeholder="YYYY-MM"></div>
+        <div class="row"><label>结束时间</label><input id="s2" type="text" placeholder="YYYY-MM"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">实习经历</div>
+        <div class="row"><label>开始时间</label><input id="s3" type="text" placeholder="YYYY-MM"></div>
+        <div class="row"><label>结束时间</label><input id="s4" type="text" placeholder="YYYY-MM"></div>
+      </div>`,
+
+    shouldNotMatch: `
+      <div><label for="n1">搜索职位</label><input id="n1" type="text"></div>
+      <div><label for="n2">图形验证码</label><input id="n2" type="text"></div>
+      <div><label for="n3">设置密码</label><input id="n3" type="password"></div>
+      <div><label for="n4">确认密码</label><input id="n4" type="password"></div>
+      <div style="display:none"><label for="n5">姓名</label><input id="n5" type="text"></div>
+      <div><label for="n6">用户名</label><input id="n6" type="text" name="userName"></div>`,
+
+    textareas: `
+      <div><label for="t1">自我评价</label><textarea id="t1"></textarea></div>
+      <div><label for="t2">专业技能</label><textarea id="t2"></textarea></div>
+      <div><label for="t3">姓名</label><input id="t3" type="text"></div>
+      <div><label for="t4">现居住地</label><textarea id="t4"></textarea></div>`,
+
+    englishForm: `
+      <div><label for="e1">Name</label><input id="e1" type="text"></div>
+      <div><label for="e2">Gender</label>
+        <select id="e2"><option>Male</option><option>Female</option></select></div>
+      <div><label for="e3">Email</label><input id="e3" type="email"></div>
+      <div><label for="e4">Mobile Phone</label><input id="e4" type="tel"></div>`,
+
+    // 真实浏览器会把游离的 <td> 丢掉，所以包一层 table，保证两端结构一致
+    noiseText: `
+      <table><tbody><tr>
+        <td><span>姓&nbsp;名</span><span class="req">*</span><input id="z1" type="text" placeholder="请输入姓名（必填）"></td>
+      </tr></tbody></table>`,
+
+    jobIntent: `
+      <div><label for="j1">应聘职位</label><input id="j1" type="text"></div>
+      <div><label for="j2">期望工作地点</label><input id="j2" type="text"></div>
+      <div><label for="j3">期望薪资</label><input id="j3" type="text"></div>
+      <div><label for="j4">最快到岗时间</label><input id="j4" type="text"></div>
+      <div><label for="j5">英语等级</label>
+        <select id="j5"><option>请选择</option><option>CET-4</option><option>CET-6</option></select></div>
+      <div><label for="j6">实习公司名称</label><input id="j6" type="text"></div>
+      <div><label for="j7">实习职位</label><input id="j7" type="text"></div>`,
+
+    // 只给出无语义的 name，属于"识别不出来"的正常情况
+    opaque: `<div><input type="text" id="o1" name="input_23" class="ipt"></div>`,
+
+    // 出生年月 / 身份证 / 民族 等
+    personal: `
+      <div><label for="p1">出生年月</label><input id="p1" type="text" placeholder="YYYY-MM"></div>
+      <div><label for="p2">身份证号码</label><input id="p2" type="text"></div>
+      <div><label for="p3">民族</label><input id="p3" type="text"></div>
+      <div><label for="p4">籍贯</label><input id="p4" type="text"></div>
+      <div><label for="p5">婚姻状况</label><select id="p5"><option>未婚</option><option>已婚</option></select></div>
+      <div><label for="p6">是否服从调剂</label><select id="p6"><option>是</option><option>否</option></select></div>`
+  };
+
+  function run(document, M, S) {
+    const profile = S.DEFAULT_PROFILE.fields;
+    const index = M.buildIndex(S.FIELD_DEFS);
+    const results = [];
+
+    const mount = (html) => { document.body.innerHTML = html; };
+    const matchOne = (el) => M.matchElement(el, { index: index, threshold: 66 });
+    const keyOf = (el) => (matchOne(el) || {}).fieldKey;
+    const check = (name, actual, expected) => {
+      const a = String(actual);
+      const e = String(expected);
+      results.push({ name, ok: a === e, actual: a, expected: e });
+    };
+    const checkTrue = (name, cond, detail) => {
+      results.push({ name, ok: !!cond, actual: detail === undefined ? String(!!cond) : String(detail), expected: 'true' });
+    };
+    const group = (title) => results.push({ group: title });
+
+    /* ---------------- 1. 表格布局 ---------------- */
+    group('表格布局（左标签 / 右控件）');
+    mount(FIXTURES.tableLayout);
+    check('姓名', keyOf(document.getElementById('f1')), 'name');
+    check('手机号码', keyOf(document.getElementById('f2')), 'phone');
+    check('电子邮箱', keyOf(document.getElementById('f3')), 'email');
+    check('紧急联系人姓名 ≠ 姓名', keyOf(document.getElementById('f4')), 'emergencyContactName');
+    check('紧急联系人电话 ≠ 手机号', keyOf(document.getElementById('f5')), 'emergencyContactPhone');
+
+    group('表头列布局（thead 定义字段名）');
+    mount(FIXTURES.headColumnLayout);
+    check('姓名（表头）', keyOf(document.getElementById('h1')), 'name');
+    check('最高学历（表头）', keyOf(document.getElementById('h2')), 'degree');
+    check('期望城市（表头）', keyOf(document.getElementById('h3')), 'expectedCity');
+
+    group('标签在独立单元格 / 带冒号与必填星号');
+    mount(FIXTURES.labelInCell);
+    check('所学专业', keyOf(document.getElementById('c1')), 'major');
+    check('毕业院校（跨标签节点）', keyOf(document.getElementById('c2')), 'school');
+    check('政治面貌：', keyOf(document.getElementById('c3')), 'politicalStatus');
+
+    /* ---------------- 2. label for ---------------- */
+    group('label for 布局');
+    mount(FIXTURES.labelFor);
+    check('毕业院校', keyOf(document.getElementById('a1')), 'school');
+    check('所学专业', keyOf(document.getElementById('a2')), 'major');
+    check('最高学历（select）', keyOf(document.getElementById('a3')), 'degree');
+    check('预计毕业时间', keyOf(document.getElementById('a4')), 'eduEnd');
+
+    /* ---------------- 3. Ant Design 结构 ---------------- */
+    group('Ant Design 结构');
+    mount(FIXTURES.antdStyle);
+    const antInputs = document.querySelectorAll('.ant-input');
+    check('期望职位', keyOf(antInputs[0]), 'expectedPosition');
+    check('期望城市', keyOf(antInputs[1]), 'expectedCity');
+
+    /* ---------------- 4. 单选组 ---------------- */
+    group('单选组');
+    mount(FIXTURES.radioGender);
+    const radios = document.querySelectorAll('input[name=gender]');
+    check('性别（容器文本剔除选项后识别）', (matchOne(radios[0]) || {}).fieldKey, 'gender');
+    const optionTexts = Array.prototype.map.call(radios, (r) => r.parentNode.textContent.trim());
+    check('选项命中「男」', M.chooseOption('男', optionTexts), '男');
+
+    /* ---------------- 5. 分区推断 ---------------- */
+    group('分区推断（教育 / 实习 同名时间字段）');
+    mount(FIXTURES.sectioned);
+    check('教育-开始时间', keyOf(document.getElementById('s1')), 'eduStart');
+    check('教育-结束时间', keyOf(document.getElementById('s2')), 'eduEnd');
+    check('实习-开始时间', keyOf(document.getElementById('s3')), 'intern1Start');
+    check('实习-结束时间', keyOf(document.getElementById('s4')), 'intern1End');
+
+    /* ---------------- 6. 安全：不该填的绝不填 ---------------- */
+    group('安全边界（搜索框 / 验证码 / 密码 / 隐藏项 / 无语义字段）');
+    mount(FIXTURES.shouldNotMatch);
+    check('搜索职位 → 不匹配', String(matchOne(document.getElementById('n1'))), 'null');
+    check('图形验证码 → 不匹配', String(matchOne(document.getElementById('n2'))), 'null');
+    check('密码 → 不匹配', String(matchOne(document.getElementById('n3'))), 'null');
+    check('确认密码 → 不匹配', String(matchOne(document.getElementById('n4'))), 'null');
+    check('display:none → 不匹配', String(matchOne(document.getElementById('n5'))), 'null');
+    check('用户名 → 不匹配姓名', String(matchOne(document.getElementById('n6'))), 'null');
+    checkTrue('isCandidate 排除隐藏元素', M.isCandidate(document.getElementById('n5'), {}) === false);
+    checkTrue('isCandidate 排除密码框', M.isCandidate(document.getElementById('n3'), {}) === false);
+    mount(FIXTURES.opaque);
+    check('无语义 name=input_23 → 不匹配', String(matchOne(document.getElementById('o1'))), 'null');
+
+    /* ---------------- 7. 控件类型匹配 ---------------- */
+    group('控件类型匹配');
+    mount(FIXTURES.textareas);
+    check('textarea ← 自我评价', keyOf(document.getElementById('t1')), 'selfEvaluation');
+    check('textarea ← 专业技能', keyOf(document.getElementById('t2')), 'skills');
+    check('input ← 姓名', keyOf(document.getElementById('t3')), 'name');
+    check('textarea ← 现居住地', keyOf(document.getElementById('t4')), 'address');
+
+    /* ---------------- 8. 英文表单 ---------------- */
+    group('英文表单');
+    mount(FIXTURES.englishForm);
+    check('Name', keyOf(document.getElementById('e1')), 'name');
+    check('Gender', keyOf(document.getElementById('e2')), 'gender');
+    check('Email（type=email 只配邮箱字段）', keyOf(document.getElementById('e3')), 'email');
+    check('Mobile Phone', keyOf(document.getElementById('e4')), 'phone');
+
+    /* ---------------- 9. 归一化 ---------------- */
+    group('文本归一化');
+    mount(FIXTURES.noiseText);
+    check('"姓 名 * 请输入姓名（必填）"', keyOf(document.getElementById('z1')), 'name');
+    check('全角冒号', M.normalize('姓名：'), '姓名');
+    check('噪声词', M.normalize('请输入姓名'), '姓名');
+    check('星号 + 必填标记', M.normalize('* 手机号码（必填）'), '手机号码');
+    check('大小写与连字符', M.normalize('E-mail Address'), 'emailaddress');
+    check('全角英数', M.normalize('ＥＭＡＩＬ'), 'email');
+
+    /* ---------------- 10. 求职意向与经历 ---------------- */
+    group('求职意向 / 实习经历');
+    mount(FIXTURES.jobIntent);
+    check('应聘职位', keyOf(document.getElementById('j1')), 'expectedPosition');
+    check('期望工作地点', keyOf(document.getElementById('j2')), 'expectedCity');
+    check('期望薪资', keyOf(document.getElementById('j3')), 'expectedSalary');
+    check('最快到岗时间', keyOf(document.getElementById('j4')), 'availableDate');
+    check('英语等级', keyOf(document.getElementById('j5')), 'englishLevel');
+    check('实习公司名称', keyOf(document.getElementById('j6')), 'intern1Company');
+    check('实习职位', keyOf(document.getElementById('j7')), 'intern1Position');
+
+    /* ---------------- 11. 个人信息 ---------------- */
+    group('个人信息');
+    mount(FIXTURES.personal);
+    check('出生年月', keyOf(document.getElementById('p1')), 'birth');
+    check('身份证号码', keyOf(document.getElementById('p2')), 'idCard');
+    check('民族', keyOf(document.getElementById('p3')), 'nation');
+    check('籍贯', keyOf(document.getElementById('p4')), 'nativePlace');
+    check('婚姻状况', keyOf(document.getElementById('p5')), 'maritalStatus');
+    check('是否服从调剂', keyOf(document.getElementById('p6')), 'acceptAdjust');
+
+    /* ---------------- 12. 日期格式化 ---------------- */
+    group('日期格式化');
+    const elWith = (attrs) => {
+      const i = document.createElement('input');
+      Object.keys(attrs).forEach((k) => i.setAttribute(k, attrs[k]));
+      return i;
+    };
+    check('type=date → YYYY-MM-DD', M.formatValue('2023-09', elWith({ type: 'date' }), { type: 'month' }), '2023-09-01');
+    check('type=month → YYYY-MM', M.formatValue('2023-09-15', elWith({ type: 'month' }), { type: 'month' }), '2023-09');
+    check('placeholder YYYY-MM', M.formatValue('2023-09', elWith({ placeholder: 'YYYY-MM' }), { type: 'month' }), '2023-09');
+    check('placeholder YYYY年MM月', M.formatValue('2023-09', elWith({ placeholder: 'YYYY年MM月' }), { type: 'month' }), '2023年09月');
+    check('placeholder YYYY/MM/DD', M.formatValue('2023-09-15', elWith({ placeholder: 'YYYY/MM/DD' }), { type: 'date' }), '2023/09/15');
+    check('maxlength=4 只留年', M.formatValue('2023-09', elWith({ maxlength: '4' }), { type: 'month' }), '2023');
+    check('"至今" 原样保留', M.formatValue('至今', elWith({}), { type: 'month' }), '至今');
+    check('非日期字段不改写', M.formatValue('测试文本', elWith({}), { type: 'text' }), '测试文本');
+    check('"2023年9月" → 补零', M.formatValue('2023年9月', elWith({ placeholder: 'YYYY-MM' }), { type: 'month' }), '2023-09');
+    check('"202309" → YYYY-MM', M.formatValue('202309', elWith({ placeholder: 'YYYY-MM' }), { type: 'month' }), '2023-09');
+
+    /* ---------------- 13. 选项匹配 ---------------- */
+    group('下拉 / 单选选项匹配');
+    check('本科 ← 精确', M.chooseOption('本科', ['请选择', '大专', '本科', '硕士研究生']), '本科');
+    check('本科 ← 大学本科', M.chooseOption('本科', ['大专', '大学本科', '硕士']), '大学本科');
+    check('硕士研究生 ← 硕士', M.chooseOption('硕士研究生', ['本科', '硕士', '博士']), '硕士');
+    check('本科 ← 本科（学士）', M.chooseOption('本科', ['专科', '本科（学士）', '硕士']), '本科（学士）');
+    check('CET-6 ← 大学英语六级', M.chooseOption('CET-6', ['大学英语四级', '大学英语六级', '无']), '大学英语六级');
+    check('男 ← Male', M.chooseOption('男', ['Male', 'Female']), 'Male');
+    check('是 ← Yes', M.chooseOption('是', ['Yes', 'No']), 'Yes');
+    check('否 ← No', M.chooseOption('否', ['Yes', 'No']), 'No');
+    check('找不到 → null', M.chooseOption('火星语', ['甲', '乙']), 'null');
+    check('空值 → null', M.chooseOption('', ['甲']), 'null');
+
+    /* ---------------- 14. 空白档案模板 ----------------
+       仓库里必须不带任何真实个人数据，否则 clone 的人会把别人的信息填进自己表单。
+       这里既检查结构完整，也扫一遍常见个人信息的格式。 */
+    group('空白档案模板与隐私');
+    const blankKeys = Object.keys(profile);
+    check('字段 key 数量与字典一致', blankKeys.length, S.FIELD_DEFS.length);
+    check('模板无缺失字段',
+      S.FIELD_DEFS.filter((d) => !blankKeys.includes(d.key)).map((d) => d.key).join(','), '');
+    check('模板所有值都是空字符串',
+      blankKeys.filter((k) => String(profile[k]).trim() !== '').join(','), '');
+    checkTrue('模板名字是通用名而非真实姓名',
+      /我的档案|未命名|默认/.test(S.DEFAULT_PROFILE.name), S.DEFAULT_PROFILE.name);
+
+    const blob = JSON.stringify(S.DEFAULT_PROFILE);
+    const leakPatterns = [
+      [/1[3-9]\d{9}/, '手机号'],
+      [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/, '邮箱'],
+      [/\d{17}[\dXx]/, '身份证号'],
+      [/\d{16,19}/, '长数字串（银行卡/证件号）']
+    ];
+    leakPatterns.forEach((pair) => {
+      const hit = blob.match(pair[0]);
+      checkTrue('档案模板不含' + pair[1], !hit, hit ? hit[0] : '无');
+    });
+
+    /* ---------------- 15. 字段字典自检 ---------------- */
+    group('字段字典自检');
+    const keys = S.FIELD_DEFS.map((d) => d.key);
+    checkTrue('字段 key 无重复', new Set(keys).size === keys.length,
+      keys.filter((k, i) => keys.indexOf(k) !== i).join(','));
+    const noAlias = S.FIELD_DEFS.filter((d) => !(d.aliases || []).length).map((d) => d.key);
+    checkTrue('每个字段都有别名', noAlias.length === 0, noAlias.join(','));
+    const badGroup = S.FIELD_DEFS.filter((d) => !d.group || !d.label).map((d) => d.key);
+    checkTrue('每个字段都有 label 与 group', badGroup.length === 0, badGroup.join(','));
+
+    return results;
+  }
+
+  root.NRFA_TEST_CASES = { FIXTURES, run };
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+
+</script>
+<script>
+(function () {
+  var out = document.getElementById('results');
+  var results;
+  try {
+    results = NRFA_TEST_CASES.run(document, NRFA_MATCHER, NRFA_SCHEMA);
+  } catch (e) {
+    document.getElementById('env').textContent = '运行出错：' + e.message;
+    return;
+  }
+  var pass = results.filter(function (r) { return r.ok; }).length;
+  var fail = results.length - pass;
+  document.getElementById('pass').textContent = pass;
+  document.getElementById('fail').textContent = fail;
+  document.getElementById('fail').className = 'big ' + (fail ? 'bad' : '');
+  document.getElementById('bar').style.width = Math.round(pass / results.length * 100) + '%';
+  document.getElementById('verdict').textContent = fail ? '有 ' + fail + ' 项未通过' : '全部通过 🎉';
+  document.getElementById('verdict').style.color = fail ? 'var(--red)' : 'var(--green)';
+
+  var html = '';
+  results.forEach(function (r) {
+    if (r.group) { html += '<h2>' + r.group + '</h2>'; return; }
+    html += '<div class="case ' + (r.ok ? '' : 'fail') + '">'
+      + '<span class="m">' + (r.ok ? '✅' : '❌') + '</span>'
+      + '<span>' + r.name
+      + '<span class="detail">期望：' + r.expected + ' ／ 实际：' + r.actual + '</span>'
+      + '</span></div>';
+  });
+  out.innerHTML = html;
+
+  document.getElementById('env').textContent =
+    '运行环境：' + navigator.userAgent + '　·　用例总数 ' + results.length;
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+*.zip
+*.crx
+*.pem
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+
+# 日志与临时文件
+*.log
+npm-debug.log*
+_tmp/
+.tmp/
+
+# GitHub 自带的模板目录留空即可
+
+# 本机专用：个人数据关键词表（含真实信息，绝不能提交）
+tools/privacy-keywords.local.json

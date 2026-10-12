@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>网申助手 · 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">填</div>
+      <div>
+        <h1>网申助手 · 设置</h1>
+        <p id="subtitle">所有数据只保存在这台电脑的浏览器里</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span class="save-state" id="saveState">已保存</span>
+      <button class="btn" id="btnSelfTest">识别引擎自测</button>
+      <button class="btn primary" id="btnSave">保存</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="side">
+      <div class="side-block">
+        <div class="side-title">
+          <span>投递档案</span>
+          <button class="mini" id="btnNewProfile" title="新建档案">＋</button>
+        </div>
+        <ul class="profile-list" id="profileList"></ul>
+        <div class="side-btns">
+          <button class="mini wide" id="btnDuplicateProfile">复制当前档案</button>
+          <button class="mini wide danger" id="btnDeleteProfile">删除当前档案</button>
+        </div>
+      </div>
+
+      <nav class="nav" id="nav">
+        <a href="#fields" class="active">档案字段</a>
+        <a href="#attachment">简历附件</a>
+        <a href="#custom">自定义字段</a>
+        <a href="#rules">站点规则</a>
+        <a href="#general">通用设置</a>
+        <a href="#backup">导入 / 导出</a>
+      </nav>
+
+      <div class="side-note" id="missingNote" hidden></div>
+    </aside>
+
+    <main class="main">
+      <section id="sec-fields" class="sec">
+        <div class="sec-head">
+          <h2>档案字段</h2>
+          <div class="sec-tools">
+            <input type="search" id="fieldSearch" placeholder="搜索字段名…">
+            <label class="chk"><input type="checkbox" id="onlyEmpty"> 只看空字段</label>
+          </div>
+        </div>
+        <p class="hint">带 <span class="dot-req"></span> 的是网申几乎必填项。填得越全，一键填充的命中率越高。</p>
+        <div id="fieldsRoot"></div>
+      </section>
+
+      <section id="sec-attachment" class="sec">
+        <div class="sec-head"><h2>简历附件</h2></div>
+        <p class="hint">选一个本地简历文件（PDF / DOC / DOCX，建议 5MB 以内）。填表时插件会把它自动挂到「上传简历」这类文件控件上。</p>
+        <div class="attach-box">
+          <div class="attach-info" id="attachInfo">尚未选择简历文件</div>
+          <div class="attach-actions">
+            <input type="file" id="resumeInput" accept=".pdf,.doc,.docx,.txt,.rtf" hidden>
+            <button class="btn" id="btnPickResume">选择文件…</button>
+            <button class="btn danger" id="btnClearResume">清除</button>
+          </div>
+        </div>
+        <p class="hint small">注意：部分网站的文件控件由自绘组件实现，浏览器不允许脚本直接置入文件，这种情况下需要你手动选一次。</p>
+      </section>
+
+      <section id="sec-custom" class="sec">
+        <div class="sec-head">
+          <h2>自定义字段</h2>
+          <button class="btn" id="btnAddCustom">添加字段</button>
+        </div>
+        <p class="hint">遇到插件字典里没有的字段（例如「是否接受外派」「导师姓名」），在这里加一条；别名用英文逗号分隔，会把页面上这些文字识别成同一个字段。字段值在「档案字段 → 自定义字段」里填写。</p>
+        <div id="customRoot"></div>
+      </section>
+
+      <section id="sec-rules" class="sec">
+        <div class="sec-head">
+          <h2>站点规则</h2>
+          <button class="btn danger" id="btnClearRules">清空全部规则</button>
+        </div>
+        <p class="hint">当某个网站字段名太特殊、自动识别不准时，可以在页面上用插件面板手动指定一次，之后会记住。这里可以看到并删除已记录的内容。</p>
+        <div id="rulesRoot"></div>
+      </section>
+
+      <section id="sec-general" class="sec">
+        <div class="sec-head"><h2>通用设置</h2></div>
+        <div class="opt-list">
+          <label class="opt">
+            <span class="opt-label">悬浮球显示方式</span>
+            <select id="setFabMode">
+              <option value="auto">智能判断（疑似网申页才显示）</option>
+              <option value="always">总是显示</option>
+              <option value="never">从不显示</option>
+            </select>
+          </label>
+          <label class="opt">
+            <span class="opt-label">只填空白字段</span>
+            <input type="checkbox" id="setFillEmptyOnly">
+            <span class="opt-desc">打开后不会覆盖你已经填过的内容（推荐）。</span>
+          </label>
+          <label class="opt">
+            <span class="opt-label">填充后高亮标出</span>
+            <input type="checkbox" id="setHighlight">
+            <span class="opt-desc">用绿色描边标出刚填好的控件，方便核对。</span>
+          </label>
+          <label class="opt">
+            <span class="opt-label">触发 input/change 事件</span>
+            <input type="checkbox" id="setEvents">
+            <span class="opt-desc">React / Vue 站点必须打开，否则页面读不到填进去的值。</span>
+          </label>
+          <label class="opt">
+            <span class="opt-label">自动上传简历附件</span>
+            <input type="checkbox" id="setFillFile">
+            <span class="opt-desc">遇到文件控件时自动挂上你在上面选的简历。</span>
+          </label>
+          <label class="opt">
+            <span class="opt-label">打开页面后自动填充</span>
+            <input type="checkbox" id="setAutoFill">
+            <span class="opt-desc">谨慎开启：进入疑似网申页且识别到 3 项以上时自动填，不弹面板。</span>
+          </label>
+          <label class="opt">
+            <span class="opt-label">识别置信阈值</span>
+            <input type="range" id="setThreshold" min="50" max="100" step="2">
+            <span class="opt-desc" id="thresholdText"></span>
+          </label>
+        </div>
+      </section>
+
+      <section id="sec-backup" class="sec">
+        <div class="sec-head"><h2>导入 / 导出</h2></div>
+        <p class="hint">导出会把全部档案与设置存成一个 JSON 文件（不含简历附件本身），换电脑时导入即可。</p>
+        <div class="backup-actions">
+          <button class="btn" id="btnExport">导出 JSON</button>
+          <input type="file" id="importInput" accept=".json" hidden>
+          <button class="btn" id="btnImport">导入 JSON</button>
+          <button class="btn danger" id="btnReset">恢复为初始档案</button>
+        </div>
+        <div class="sec-head" style="margin-top:26px"><h2>使用提示</h2></div>
+        <ul class="tips">
+          <li>在网申页按 <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> 一键填充；<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> 打开识别面板。</li>
+          <li>也可以点工具栏上的插件图标，或用页面右下角的悬浮球。</li>
+          <li>填完记得核对：插件只负责把值写进控件，不保证网站的校验规则都通过。</li>
+          <li>部分自绘下拉（Ant Design / Element UI）会自动展开选择；如果失败，面板里会标红并说明原因。</li>
+          <li>填错了就点面板里的「撤销」，会恢复成填充前的样子。</li>
+        </ul>
+        <div id="welcomeBox" class="welcome" hidden>
+          <h3>装好了，三步就能用</h3>
+          <ol>
+            <li>在这里补全下面标红的空字段（尤其是性别、出生年月这类网申必填项）。</li>
+            <li>在「简历附件」里选一份简历文件。</li>
+            <li>打开网申页面，按 <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>。</li>
+          </ol>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="../common/schema.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
