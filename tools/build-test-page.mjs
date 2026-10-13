@@ -63,6 +63,12 @@ const html = `<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- 测试夹具的挂载点：放在屏幕外，避免 cases.js 的 mount() 把上面的结果区域冲掉。
+       不能用 display:none —— 那会让 getClientRects() 返回空，
+       「隐藏元素不该被填」这类可见性用例就会失真。 -->
+  <div id="nrfa-fixture-host" aria-hidden="true"
+       style="position:absolute;left:-99999px;top:0;width:900px;overflow:hidden"></div>
+
 <script>
 ${schema}
 </script>
@@ -82,12 +88,15 @@ ${cases}
     document.getElementById('env').textContent = '运行出错：' + e.message;
     return;
   }
-  var pass = results.filter(function (r) { return r.ok; }).length;
-  var fail = results.length - pass;
+  // 注意：results 里还混着分组标题（{group:'xxx'}，没有 ok 字段）。
+  // 统计时必须先剔除，否则分组数会被算成"失败项"。
+  var cases = results.filter(function (r) { return !r.group; });
+  var pass = cases.filter(function (r) { return r.ok; }).length;
+  var fail = cases.length - pass;
   document.getElementById('pass').textContent = pass;
   document.getElementById('fail').textContent = fail;
   document.getElementById('fail').className = 'big ' + (fail ? 'bad' : '');
-  document.getElementById('bar').style.width = Math.round(pass / results.length * 100) + '%';
+  document.getElementById('bar').style.width = (cases.length ? Math.round(pass / cases.length * 100) : 0) + '%';
   document.getElementById('verdict').textContent = fail ? '有 ' + fail + ' 项未通过' : '全部通过 🎉';
   document.getElementById('verdict').style.color = fail ? 'var(--red)' : 'var(--green)';
 
@@ -103,7 +112,8 @@ ${cases}
   out.innerHTML = html;
 
   document.getElementById('env').textContent =
-    '运行环境：' + navigator.userAgent + '　·　用例总数 ' + results.length;
+    '运行环境：' + navigator.userAgent +
+    '　·　用例总数 ' + cases.length + '（另有 ' + (results.length - cases.length) + ' 个分组标题）';
 })();
 </script>
 </body>

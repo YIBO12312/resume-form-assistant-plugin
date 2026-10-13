@@ -131,7 +131,11 @@
     const index = M.buildIndex(S.FIELD_DEFS);
     const results = [];
 
-    const mount = (html) => { document.body.innerHTML = html; };
+    // 夹具挂载点：浏览器自测页会提供一个「屏幕外的宿主容器」。
+    // 若直接写 document.body.innerHTML，会把页面自己的结果区域一起冲掉，
+    // 导致在浏览器里打开自测页只能看到最后一个夹具（Node 侧没这个容器，回退 body）。
+    const host = document.getElementById('nrfa-fixture-host') || document.body;
+    const mount = (html) => { host.innerHTML = html; };
     const matchOne = (el) => M.matchElement(el, { index: index, threshold: 66 });
     const keyOf = (el) => (matchOne(el) || {}).fieldKey;
     const check = (name, actual, expected) => {
