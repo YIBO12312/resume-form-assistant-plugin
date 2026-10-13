@@ -224,6 +224,67 @@
   }
 
   /**
+   * 这一块本身是不是「标签」（.field-label / .form-label / .control-label …）。
+   * 类名带 label / field-name / caption 的都算。
+   */
+  const LABELISH_CLASS = /label|field-?name|control-?label|item-?label|caption/i;
+  /**
+   * 这一块是不是「一个完整的字段行」（.fx-field / .ant-form-item / .el-form-item …）。
+   *
+   * 为什么需要它：简道云/帆软这类平台里，自绘下拉（性别、籍贯、学位、语言特长）
+   * 内部根本没有原生 input/select，所以「跳过含控件的兄弟块」这条护栏对它们失效，
+   * 结果上一个字段行的标签会被算到下一个真实的 input 头上 ——
+   * 实测中「学号」就被上一行的「学位」抢走了。加了这条判断后，
+   * 字段行（而非标签）一律不作为标签候选。
+   * 判断顺序很重要：先看像不像标签，再看像不像字段行（field-label 两个正则都命中，必须前者优先）。
+   */
+  const FIELDROW_CLASS = /field|form-?item|widget|grid-?col|form-?row|control-?wrap/i;
+
+  function looksLikeFieldRow(node) {
+    if (!node || !node.getAttribute) return false;
+    const cls = String(node.getAttribute('class') || '');
+    if (!cls) return false;
+    if (LABELISH_CLASS.test(cls)) return false;
+    return FIELDROW_CLASS.test(cls);
+  }
+
+  /**
+   * 这段文本是不是「分区标题」（教育经历 / 实习经历 / 获奖情况…）？
+   * 用于把分区标题从字段标签候选里剔除 —— 否则容器式表单里
+   * <div class="card-title">实习经历</div> 会被当成紧随其后的输入框的标签。
+   * 只在归一化后长度 >= 4 时判定，避免误伤「技能」「学历」这类短字段名。
+   * （SECTION_RULES 在文件后面声明，但本函数只在运行期被调用，届时已初始化。）
+   */
+  function looksLikeSectionTitle(text) {
+    const n = normalize(text);
+    if (!n || n.length < 4) return false;
+    for (let i = 0; i < SECTION_RULES.length; i++) {
+      if (SECTION_RULES[i].re.test(n)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 容器里「不属于 el 那一支」的文字。用于把「标签 + 控件 + 隐藏 input」这种
+   * 容器结构里的标签单独取出来（日期选择器、带清除按钮的下拉最常见）。
+   */
+  function ownLabelText(node, el) {
+    let out = '';
+    for (let i = 0; i < node.childNodes.length; i++) {
+      const c = node.childNodes[i];
+      if (c.nodeType === 3) { out += c.nodeValue + ' '; continue; }
+      if (c.nodeType !== 1) continue;
+      if (c === el || (c.contains && c.contains(el))) continue;
+      if (c.querySelector && c.querySelector('input,select,textarea')) continue;
+      // 关键：跳过「字段行」子块。否则往上走到字段列表那一层时，
+      // 会把上一行的 .field-label 也当成自己的标签（实测同样让「学号」错配到「学位」）。
+      if (looksLikeFieldRow(c)) continue;
+      out += (c.textContent || '') + ' ';
+    }
+    return out;
+  }
+
+  /**
    * 收集一个控件的所有候选上下文文本
    * @returns {Array<{text:string, raw:string, source:string, weight:number}>}
    */
@@ -342,6 +403,55 @@
       }
       node = node.parentElement;
       level++;
+    }
+
+    /* 9b. 祖先的前兄弟节点是标签 —— 容器式低代码/表单平台最常见的结构。
+           典型形态（简道云 · 帆软 / 明道云 / 宜搭等）：
+             <div class="fx-field">
+               <div class="field-label"><span>*</span><div class="field-name">姓名</div></div>
+               <div class="field-component"> … <input class="input-inner"> … </div>
+             </div>
+           这类表单的 input 往往没有任何 id / name / placeholder / aria / data-*，
+           标签既不是 label[for]，也不是 input 的直接兄弟，
+           而是「包含 input 的那层容器的前一个兄弟」，位置还随框架层级变化。
+           所以逐层向上找，权重随层数衰减，并且必须低于 label(100)，让显式标签始终优先。
+
+           两个必须的护栏：
+           a) 含控件的整块字段行直接跳过 —— 否则会把上一行的标签算到本行；
+           b) 分区标题（教育经历 / 实习经历 / 获奖情况…）要排除 —— 否则
+              <div class="card-title">实习经历</div> 会被当成下面输入框的标签，
+              把「开始时间」这类歧义字段直接抢走。 */
+    let up = el;
+    for (let lv = 0; lv < 7 && up && up.parentElement; lv++) {
+      up = up.parentElement;
+      const ancSib = up.previousElementSibling;
+      if (!ancSib) continue;
+      const hasControl = ancSib.querySelector && ancSib.querySelector('input,select,textarea');
+      // 三层护栏：
+      //  a) 含控件的整块字段行 → 跳过（否则上一行的标签会算到本行）
+      //  b) 类名表明它是「字段行」而非「标签」→ 跳过（自绘下拉那块没有原生控件，a 拦不住）
+      //  c) 分区标题 → 跳过
+      // 只认「紧邻的前一个」兄弟：一旦紧邻那块不可用，再往前退就是跨行，必然泄漏。
+      if (!hasControl && !looksLikeFieldRow(ancSib) && !looksLikeSectionTitle(ancSib.textContent)) {
+        const t = ancSib.textContent;
+        // 启发式来源只接受「像标签」的短文本：子表单里的列头会被拼成长串
+        // （实测出现过「开始时间结束时间公司职位工作描述…」靠子串命中 internDuty），
+        // 标签不可能有 20 多个字，直接挡掉。
+        if (normalize(t).length <= 24) push(t, 'ancestorSibling' + lv, 82 - lv * 3);
+      }
+    }
+
+    /* 9c. 容器自身的文本（排除包含本控件的那一支）。
+           日期选择器、带清除按钮的下拉这类控件的容器里往往是「标签 + 本控件 + 隐藏 input」，
+           使第 9 条「容器内只有 1 个控件」不成立，标签就永远取不到。
+           这里只取容器里「不属于本控件那一支」的文字，从而把标签捞出来。 */
+    let node2 = el.parentElement;
+    for (let lv2 = 0; lv2 < 6 && node2; lv2++) {
+      const own = ownLabelText(node2, el);
+      if (own && !looksLikeSectionTitle(own) && normalize(own).length <= 24) {
+        push(own, 'containerOwn' + lv2, 78 - lv2 * 3);
+      }
+      node2 = node2.parentElement;
     }
 
     /* 10. 属性兜底 */

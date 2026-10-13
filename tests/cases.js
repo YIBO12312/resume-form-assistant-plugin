@@ -116,6 +116,68 @@
     // 只给出无语义的 name，属于"识别不出来"的正常情况
     opaque: `<div><input type="text" id="o1" name="input_23" class="ipt"></div>`,
 
+    // 容器式低代码表单（简道云 · 帆软的真实结构，2026-10 实测抓取）
+    // 特征：input 无 id / name / placeholder / aria / data-*；
+    //       标签在「包含 input 的容器的前一个兄弟」里，层级随框架变化。
+    lowcode: `
+      <div class="widget-list">
+        <div class="fx-field x-grid-col-6">
+          <div class="field-label"><span class="field-required">*</span><div class="field-name">姓名</div></div>
+          <div class="field-component"><div class="fx-form-text"><div class="x-input normal-input">
+            <div class="x-inner-wrapper"><input type="text" class="input-inner" id="lc1" autocomplete="new-password" value=""></div>
+          </div></div></div>
+        </div>
+        <div class="fx-field x-grid-col-6">
+          <div class="field-label"><span class="field-required">*</span><div class="field-name">民族</div></div>
+          <div class="field-component"><div class="fx-form-text"><div class="x-input normal-input">
+            <div class="x-inner-wrapper"><input type="text" class="input-inner" id="lc2"></div>
+          </div></div></div>
+        </div>
+        <div class="fx-field x-grid-col-6">
+          <div class="field-label"><span class="field-required">*</span><div class="field-name">手机</div></div>
+          <div class="field-component"><div class="fx-form-text"><div class="x-input normal-input">
+            <div class="x-inner-wrapper"><input type="text" class="input-inner" id="lc3"></div>
+          </div></div></div>
+        </div>
+        <div class="fx-field x-grid-col-6">
+          <div class="field-label"><span class="field-required">*</span><div class="field-name">邮箱</div></div>
+          <div class="field-component"><div class="fx-form-text"><div class="x-input normal-input">
+            <div class="x-inner-wrapper"><input type="text" class="input-inner" id="lc4"></div>
+          </div></div></div>
+        </div>
+      </div>`,
+
+    // 同一结构的负例：第二个字段没有 label，绝不能继承上一行的「姓名」
+    lowcodeNeighbor: `
+      <div class="widget-list">
+        <div class="fx-field">
+          <div class="field-label"><div class="field-name">姓名</div></div>
+          <div class="field-component"><div class="x-input"><div class="x-inner-wrapper">
+            <input type="text" class="input-inner" id="ln1"></div></div></div>
+        </div>
+        <div class="fx-field">
+          <div class="field-component"><div class="x-input"><div class="x-inner-wrapper">
+            <input type="text" class="input-inner" id="ln2"></div></div></div>
+        </div>
+      </div>`,
+
+    // 回归：上一行是「自绘下拉」（内部没有原生控件），它的标签绝不能算到下一行头上。
+    // 实测场景：简道云/帆软的「学位」是自绘下拉，导致后面真实的「学号」输入框
+    // 被错配成 academicDegree —— 这类误填比漏填危险得多。
+    lowcodeNoControlRow: `
+      <div class="widget-list">
+        <div class="fx-field x-grid-col-6">
+          <div class="field-label"><span class="field-required">*</span><div class="field-name">学位</div></div>
+          <div class="field-component"><div class="x-select"><div class="x-select-input">请选择</div></div></div>
+        </div>
+        <div class="fx-field x-grid-col-6">
+          <div class="field-label"><span class="field-required">*</span><div class="field-name">学号</div></div>
+          <div class="field-component"><div class="fx-form-text"><div class="x-input normal-input">
+            <div class="x-inner-wrapper"><input type="text" class="input-inner" id="fr1" placeholder="若无学号可填写“无”"></div>
+          </div></div></div>
+        </div>
+      </div>`,
+
     // 出生年月 / 身份证 / 民族 等
     personal: `
       <div><label for="p1">出生年月</label><input id="p1" type="text" placeholder="YYYY-MM"></div>
@@ -165,8 +227,7 @@
 
     group('标签在独立单元格 / 带冒号与必填星号');
     mount(FIXTURES.labelInCell);
-    check('所学专业', keyOf(document.getElementById('c1')), 'major');
-    check('毕业院校（跨标签节点）', keyOf(document.getElementById('c2')), 'school');
+    check('所学专业', keyOf(document.getElementById('c1')), 'major');    check('毕业院校（跨标签节点）', keyOf(document.getElementById('c2')), 'school');
     check('政治面貌：', keyOf(document.getElementById('c3')), 'politicalStatus');
 
     /* ---------------- 2. label for ---------------- */
@@ -176,6 +237,24 @@
     check('所学专业', keyOf(document.getElementById('a2')), 'major');
     check('最高学历（select）', keyOf(document.getElementById('a3')), 'degree');
     check('预计毕业时间', keyOf(document.getElementById('a4')), 'eduEnd');
+
+    /* ---------------- 2b. 容器式低代码表单（简道云 · 帆软真实结构） ---------------- */
+    group('容器式低代码表单（标签是祖先容器的前兄弟）');
+    mount(FIXTURES.lowcode);
+    check('姓名（无 id/name/placeholder）', keyOf(document.getElementById('lc1')), 'name');
+    check('民族', keyOf(document.getElementById('lc2')), 'nation');
+    check('手机', keyOf(document.getElementById('lc3')), 'phone');
+    check('邮箱', keyOf(document.getElementById('lc4')), 'email');
+
+    group('低代码表单的负例（上一行的标签不能串到本行）');
+    mount(FIXTURES.lowcodeNeighbor);
+    check('第一个字段认出姓名', keyOf(document.getElementById('ln1')), 'name');
+    check('无标签字段不继承上一行', String(keyOf(document.getElementById('ln2'))), 'undefined');
+
+    group('低代码表单的负例（上一行是自绘下拉，内部无原生控件）');
+    mount(FIXTURES.lowcodeNoControlRow);
+    checkTrue('学号不该被上一行的「学位」抢走', keyOf(document.getElementById('fr1')) !== 'academicDegree',
+      '实际=' + String(keyOf(document.getElementById('fr1'))));
 
     /* ---------------- 3. Ant Design 结构 ---------------- */
     group('Ant Design 结构');
